@@ -66,6 +66,55 @@ _config = Config(VAULT)
 # Inyectar exclusiones en vault.py
 from cli.vault import apply_config
 apply_config(_config)
+
+# ── Política de acceso (modo público) ───────────────────────────────────────
+# OKF_SCOPE=<prefijo>  → instancia acotada a un subárbol del vault. El prefijo
+#   se propaga al CLI, que es quien lo enforza (find_md_files + resolución de
+#   slugs y wikilinks). El server no filtra: no podría hacerlo bien, porque el
+#   output lo produce el CLI.
+# OKF_READONLY=true    → no se registran las tools de escritura: un agente
+#   público no debe verlas en su toolset (además de fallar si las invocara).
+from cli.access import is_readonly, normalize_scope
+
+
+def _argv_value(flag):
+    """Valor de un flag propio del server (--flag valor | --flag=valor), o None."""
+    prefix = flag + "="
+    for i, arg in enumerate(sys.argv):
+        if arg == flag and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+        if arg.startswith(prefix):
+            return arg[len(prefix):]
+    return None
+
+
+# La política de acceso se puede fijar por ARGUMENTO (--scope / --readonly) o por
+# entorno. El argumento gana. Motivo: si el entorno no se propaga al subproceso
+# MCP, un control que solo vive en env desaparece en silencio y la instancia
+# queda SIN alcance (fail-open) — el peor modo de falla para un control de
+# acceso. Por eso, en la práctica, se pinea por argv en el config del perfil:
+#   args: [server.py, --vault, /opt/data/vault, --scope, publico, --readonly]
+_READONLY = ("--readonly" in sys.argv) or is_readonly()
+_SCOPE = normalize_scope(_argv_value("--scope") or os.environ.get("OKF_SCOPE", ""))
+if _SCOPE:
+    CLI += ["--scope", _SCOPE]
+
+# Tools que escriben en el vault (o que exponen el host). Con OKF_READONLY no
+# se registran: quedan invisibles al agente.
+_WRITE_TOOLS = frozenset({
+    "new", "edit", "index", "touch", "canvas",
+    "graph_command", "graph_suggest_edge_types", "analytics", "trace",
+})
+
+
+def _mcp_tool():
+    """Registra la tool solo si la política de acceso lo permite."""
+    def _decorator(fn):
+        if _READONLY and fn.__name__ in _WRITE_TOOLS:
+            return fn  # definida pero NO registrada
+        return mcp.tool()(fn)
+    return _decorator
+
 # Rotación del event_log.jsonl: la misma política que aplica el CLI
 from cli.telemetry import rotate_jsonl
 
@@ -480,7 +529,7 @@ def _run(args: list[str], tool_name: str = "unknown", params: dict | None = None
         return f"[error] {e}"
 
 
-@mcp.tool()
+@_mcp_tool()
 def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: bool = False, json_output: bool = False, seeds: str = "", edge_type: str = "", filter: bool = False) -> str:
     """Semantic traversal of the OKF graph. Returns concept frontmatter + neighborhood (wikilinks, backlinks, cyber.corrects).
 
@@ -533,7 +582,7 @@ def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: 
     return _run(args, tool_name="okf_traverse", params=params)
 
 
-@mcp.tool()
+@_mcp_tool()
 def search(query: str = "", type: str = "", status: str = "", cyber_field: str = "", cyber_value: str = "", todos: bool = False, json_output: bool = False, since: str = "", until: str = "", with_graph: bool = False) -> str:
     """FTS5 search in the OKF vault + pending tasks list (todos=true). FALLBACK — prefer traverse or index reads.
 
@@ -585,7 +634,7 @@ def search(query: str = "", type: str = "", status: str = "", cyber_field: str =
     })
 
 
-@mcp.tool()
+@_mcp_tool()
 def todos(all: bool = False, aging: bool = False, json_output: bool = False) -> str:
     """Lists pending tasks (- [ ] checkboxes) in the OKF vault, grouped by project.
 
@@ -610,7 +659,7 @@ def todos(all: bool = False, aging: bool = False, json_output: bool = False) -> 
     })
 
 
-@mcp.tool()
+@_mcp_tool()
 def read(slug: str, offset: int = 1, limit: int = 500, no_touch: bool = False) -> str:
     """Reads a concept from the OKF vault and increments its read counter.
 
@@ -631,7 +680,7 @@ def read(slug: str, offset: int = 1, limit: int = 500, no_touch: bool = False) -
     })
 
 
-@mcp.tool()
+@_mcp_tool()
 def graph(command: str, arg: str = "", edge_type: str = "") -> str:
     """Analyzes the wikilink graph, typed edges, and tags of the OKF vault.
 
@@ -665,7 +714,7 @@ def graph(command: str, arg: str = "", edge_type: str = "") -> str:
     return _run(args, tool_name="okf_graph", params=params)
 
 
-@mcp.tool()
+@_mcp_tool()
 def graph_suggest_edge_types(apply: bool = False, min_score: float = 0.0) -> str:
     """Suggests edge types for existing untyped wikilinks.
 
@@ -688,7 +737,7 @@ def graph_suggest_edge_types(apply: bool = False, min_score: float = 0.0) -> str
     return _run(args, tool_name="okf_graph", params=params)
 
 
-@mcp.tool()
+@_mcp_tool()
 def graph_impact(slug: str) -> str:
     """Ontological impact analysis: which nodes to review if this one changes.
 
@@ -703,7 +752,7 @@ def graph_impact(slug: str) -> str:
                 params={"command": "impact", "arg": slug})
 
 
-@mcp.tool()
+@_mcp_tool()
 def health(strict: bool = False, json_output: bool = False) -> str:
     """Complete health check of the OKF vault (8 checks).
 
@@ -722,7 +771,7 @@ def health(strict: bool = False, json_output: bool = False) -> str:
     return _run(args, tool_name="okf_health", params={"strict": strict, "json_output": json_output})
 
 
-@mcp.tool()
+@_mcp_tool()
 def index() -> str:
     """Regenerates all index.md and log.md in the OKF vault.
 
@@ -732,7 +781,7 @@ def index() -> str:
     return _run(["index"], tool_name="okf_index", params={})
 
 
-@mcp.tool()
+@_mcp_tool()
 def touch(all: bool = True) -> str:
     """Read statistics of the OKF vault (read counters from the local store).
 
@@ -749,7 +798,7 @@ def touch(all: bool = True) -> str:
     return _run(args, tool_name="okf_touch", params={})
 
 
-@mcp.tool()
+@_mcp_tool()
 def session_metrics(json_output: bool = False) -> str:
     """Aggregated metrics of all vault sessions.
 
@@ -766,7 +815,7 @@ def session_metrics(json_output: bool = False) -> str:
     return _run(args, tool_name="okf_session_metrics", params={"json_output": json_output})
 
 
-@mcp.tool()
+@_mcp_tool()
 def stale(json_output: bool = False) -> str:
     """Semantic staleness detector of the OKF vault.
 
@@ -786,7 +835,7 @@ def stale(json_output: bool = False) -> str:
     return _run(args, tool_name="okf_stale", params={"json_output": json_output})
 
 
-@mcp.tool()
+@_mcp_tool()
 def new(type: str, title: str = "", description: str = "", tags: str = "", status: str = "", cyber: bool = False, dry_run: bool = False, body: str = "", links: str = "", entity: str = "", filename: str = "", fields: list | None = None, omit_timestamps: bool = False) -> str:
     """Creates a new concept in the OKF vault with consistent frontmatter.
 
@@ -858,7 +907,7 @@ def new(type: str, title: str = "", description: str = "", tags: str = "", statu
     })
 
 
-@mcp.tool()
+@_mcp_tool()
 def edit(slug: str, title: str = "", description: str = "", tags: str = "",
          status: str = "", resource: str = "", body: str = "", links: str = "",
          fields: list | None = None, clear_links: bool = False, dry_run: bool = False) -> str:
@@ -925,7 +974,7 @@ def edit(slug: str, title: str = "", description: str = "", tags: str = "",
 
 # ── Cognitive Trace: Analytics + Commands ───────────────────────────────────
 
-@mcp.tool()
+@_mcp_tool()
 def analytics(query: str = "most_visited", limit: int = 10,
                   arg: str = "", session_id: str = "") -> str:
     """Analytical query over trace events of the OKF vault.
@@ -962,7 +1011,7 @@ def analytics(query: str = "most_visited", limit: int = 10,
     )
 
 
-@mcp.tool()
+@_mcp_tool()
 def graph_command(action: str, nodes: str = "", tag: str = "",
                       color: str = "#FF6B35", session_id: str = "") -> str:
     """Sends a command to the Cognitive Trace plugin in Obsidian via JSONL.
@@ -1053,7 +1102,7 @@ def graph_command(action: str, nodes: str = "", tag: str = "",
     return info
 
 
-@mcp.tool()
+@_mcp_tool()
 def file_info(slug: str, json_output: bool = False) -> str:
     """Date metadata for a concept in the OKF vault.
 
@@ -1073,7 +1122,7 @@ def file_info(slug: str, json_output: bool = False) -> str:
     return _run(args, tool_name="okf_file_info", params={"slug": slug, "json_output": json_output})
 
 
-@mcp.tool()
+@_mcp_tool()
 def canvas(action: str, path: str = "", slug: str = "", algorithm: str = "auto",
            depth: int = 1, fix: bool = False, dry_run: bool = False,
            output: str = "") -> str:
@@ -1119,7 +1168,7 @@ def canvas(action: str, path: str = "", slug: str = "", algorithm: str = "auto",
                         "fix": fix, "dry_run": dry_run, "output": output})
 
 
-@mcp.tool()
+@_mcp_tool()
 def trace(query: str, layers: str = "vault,code,hooks,cron,agents") -> str:
     """Traces references to a query across all layers of the OKF ecosystem.
 
@@ -1139,7 +1188,7 @@ def trace(query: str, layers: str = "vault,code,hooks,cron,agents") -> str:
                 params={"query": query, "layers": layers})
 
 
-@mcp.tool()
+@_mcp_tool()
 def review() -> str:
     """Finds concepts with expired cyber.review_on and reports them.
 

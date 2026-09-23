@@ -8,6 +8,8 @@ Responsibilities:
 import re
 from pathlib import Path
 
+from cli.access import under_scope
+
 # Regex para wikilinks [[concepto]] y [[concepto|alias]]
 WIKILINK_RE = re.compile(r'\[\[([^\]|#]+)(?:[|#][^\]]+)?\]\]')
 # Regex para markdown links [text](path.md)
@@ -34,8 +36,13 @@ def _cached_name_index(vault):
             for f in vault.rglob("*"):
                 if f.is_file() and f.suffix not in ("", ".md") and f.name not in EXCLUDE_FILES:
                     parts = f.relative_to(vault).parts
-                    if not any(p in EXCLUDE_DIRS for p in parts):
-                        idx.setdefault(f.name, str(f.relative_to(vault)))
+                    if any(p in EXCLUDE_DIRS for p in parts):
+                        continue
+                    # Scope de subárbol: un agente público no resuelve assets
+                    # (ni links) de fuera de la carpeta publicada.
+                    if not under_scope(parts):
+                        continue
+                    idx.setdefault(f.name, str(f.relative_to(vault)))
         except Exception:
             idx = {}
         _NAME_INDEX_CACHE[cache_key] = idx
@@ -119,7 +126,7 @@ def resolve_link(target, vault, current_dir, name_index=None):
         if not target.endswith(".md"):
             target += ".md"
         candidate = vault / target
-        if candidate.exists():
+        if candidate.exists() and under_scope(target):
             return target
         return None
 
@@ -136,6 +143,8 @@ def resolve_link(target, vault, current_dir, name_index=None):
             # del vault; health los marcaba).
             if not (vault / result).exists():
                 return None
+            if not under_scope(result):
+                return None
             return result
         except ValueError:
             return None
@@ -145,7 +154,7 @@ def resolve_link(target, vault, current_dir, name_index=None):
         if not target.endswith(".md"):
             target += ".md"
         candidate = vault / target
-        if candidate.exists():
+        if candidate.exists() and under_scope(target):
             return target
         return None
 
@@ -158,7 +167,9 @@ def resolve_link(target, vault, current_dir, name_index=None):
     # Buscar en el mismo directorio primero
     candidate = current_dir / name
     if candidate.exists() and candidate.name not in EXCLUDE_FILES:
-        return str(candidate.relative_to(vault))
+        rel_same = str(candidate.relative_to(vault))
+        if under_scope(rel_same):
+            return rel_same
 
     # Buscar por índice global (explícito o caché de proceso).
     # Antes había un rglob() full-vault como fallback: se disparaba por cada

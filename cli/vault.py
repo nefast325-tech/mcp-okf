@@ -9,6 +9,19 @@ Responsibilities:
 import os
 from pathlib import Path
 
+# Política de acceso (scope de subárbol + modo solo-lectura). Re-exportada
+# acá porque los comandos ya importan de cli.vault.
+from cli.access import (  # noqa: F401
+    get_scope,
+    in_scope_file,
+    is_readonly,
+    normalize_scope,
+    resolve_scope,
+    scope_root,
+    set_scope,
+    under_scope,
+)
+
 # Constantes unificadas — defaults embebidos (pisan por Config si existe .okf.config.yaml)
 DEFAULT_EXCLUDE_FILES = {"index.md", "log.md", "dashboard.md", "AGENTS.md"}
 DEFAULT_EXCLUDE_DIRS = {".git", ".obsidian", "Templates", "scripts", "references", "assets", ".dsh-build"}
@@ -86,6 +99,9 @@ def find_md_files(vault, exclude_files=None, exclude_dirs=None, config=None):
             continue
         parts = md_file.relative_to(vault).parts
         if any(p in exclude_dirs for p in parts):
+            continue
+        # Scope de subárbol (modo público): nada fuera del prefijo publicado.
+        if not under_scope(parts):
             continue
         files.append(md_file)
     return files

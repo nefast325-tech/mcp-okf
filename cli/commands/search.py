@@ -6,7 +6,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from cli.vault import find_md_files
+from cli.vault import find_md_files, get_scope
 from cli.frontmatter import parse_frontmatter, normalize_tags
 
 
@@ -480,8 +480,10 @@ def run(args, vault, config=None):
         include_sessions = getattr(args, "include_sessions", False)
         include_handoffs = getattr(args, "include_handoffs", False)
         todos = find_todos(vault, include_done=include_all, with_aging=with_aging, include_specs=include_specs, include_skills=include_skills, include_sessions=include_sessions, include_handoffs=include_handoffs)
-        agent_bus_signals = find_agent_bus_signals()
-        todos.extend(agent_bus_signals)
+        # El agent-bus vive fuera del vault (~/.hermes/profiles/…): nunca en una
+        # instancia acotada a un subárbol (agente público).
+        if not get_scope():
+            todos.extend(find_agent_bus_signals())
         if json_out:
             print(json.dumps(todos, ensure_ascii=False, indent=2))
         else:

@@ -23,7 +23,7 @@ Semantics (Decision "Every traverse is an ontological search", 2026-08-01):
 import json
 import sys
 from pathlib import Path
-from cli.vault import build_name_index
+from cli.vault import build_name_index, under_scope
 from cli.frontmatter import parse_frontmatter, normalize_tags
 from cli.commands.graph import build_graph, _resolve_name
 
@@ -105,7 +105,7 @@ def _resolve_cyber_ref(ref, vault, name_index):
         if not ref.endswith(".md"):
             ref += ".md"
         candidate = vault / ref
-        if candidate.exists():
+        if candidate.exists() and under_scope(ref):
             return ref
         return None
 

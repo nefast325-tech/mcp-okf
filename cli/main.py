@@ -46,6 +46,8 @@ def build_parser():
                         help="Path to vault (default: $OKF_VAULT or ~/OKF-Vault)")
     parser.add_argument("--config", type=str, default=None,
                         help="Path to .okf.config.yaml (default: <vault>/.okf.config.yaml)")
+    parser.add_argument("--scope", type=str, default=None,
+                        help="Subárbol legible (modo público). Default: $OKF_SCOPE o vault completo")
     parser.add_argument("--version", action="version",
                         version=f"okf {__version__}",
                         help="Show the installed version and exit")
@@ -354,6 +356,14 @@ def main(argv=None):
     from cli.vault import apply_config
     apply_config(config)
 
+    # ── Política de acceso: scope de subárbol y modo solo-lectura ──
+    from cli.access import is_readonly, resolve_scope, set_scope, WRITE_COMMANDS
+    try:
+        set_scope(resolve_scope(getattr(args, "scope", None)))
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     # Asegurar que el directorio del CLI esté en path para imports
     cli_dir = Path(__file__).resolve().parent
     if str(cli_dir.parent) not in sys.path:
@@ -365,12 +375,19 @@ def main(argv=None):
 
     # Extraer params del namespace para telemetría (sin campos internos)
     _params = {k: v for k, v in vars(args).items()
-               if k not in ("vault", "config", "command", "func") and v is not None
+               if k not in ("vault", "config", "scope", "command", "func") and v is not None
                and v != False and v != ""}
 
     # Despachar al comando con captura de stdout/stderr para telemetría
     import io as _io
     command = args.command
+
+    # Modo solo-lectura: control duro sobre los comandos que escriben.
+    if is_readonly() and command in WRITE_COMMANDS:
+        print(f"✗ Modo solo-lectura (OKF_READONLY): '{command}' es un comando "
+              f"de escritura y está bloqueado.", file=sys.stderr)
+        sys.exit(1)
+
     _t0 = time.monotonic()
     _exit = 1
     _stdout_buf = _io.StringIO()

@@ -4,22 +4,45 @@ import os
 import sys
 from pathlib import Path
 from cli.frontmatter import increment_reads
+from cli.access import in_scope_file, scope_root
 
 
 def _find_file(target, vault):
-    """Searches for a file by name or relative path in the vault."""
-    # Coincidencia exacta por ruta relativa
-    candidate = vault / target
-    if candidate.exists():
-        return candidate
+    """Searches for a file by name or relative path in the vault.
 
-    # Por nombre de archivo
-    for f in vault.rglob("*.md"):
-        if f.name == target:
-            return f
+    Con OKF_SCOPE activo la búsqueda queda acotada al subárbol: los slugs
+    relativos se resuelven primero contra el scope (read("index.md") →
+    <scope>/index.md) y nunca se devuelve un archivo de fuera del prefijo.
+    """
+    target = str(target).strip()
+    roots = [scope_root(vault)]
 
-    # Por nombre parcial
-    candidates = [f for f in vault.rglob("*.md") if target in str(f.relative_to(vault))]
+    # 0) Ruta relativa al VAULT, si cae dentro del scope. Con scope, `read` y
+    #    `traverse` deben aceptar el mismo slug: `read` imprime el path
+    #    relativo al vault ("publico/x.md") y el agente lo vuelve a pasar tal
+    #    cual — sin esto, el eco de una lectura no sirve como entrada.
+    candidato_vault = vault / target
+    if candidato_vault.is_file() and in_scope_file(candidato_vault, vault):
+        return candidato_vault
+
+    # 1) Coincidencia exacta por ruta relativa al scope
+    for root in roots:
+        for cand in (root / target,
+                     root / (target if target.endswith(".md") else target + ".md")):
+            if cand.is_file() and in_scope_file(cand, vault):
+                return cand
+
+    # 2) Por nombre de archivo
+    for root in roots:
+        for f in sorted(root.rglob("*.md")):
+            if f.name == target and in_scope_file(f, vault):
+                return f
+
+    # 3) Por nombre parcial (solo candidatos dentro del scope)
+    candidates = [
+        f for root in roots for f in sorted(root.rglob("*.md"))
+        if target in str(f.relative_to(vault)) and in_scope_file(f, vault)
+    ]
     if len(candidates) == 1:
         return candidates[0]
     elif candidates:
