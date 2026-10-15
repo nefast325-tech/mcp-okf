@@ -128,43 +128,21 @@ def has_problem_language(description, patterns=None):
 
 
 def build_backlinks_index(vault):
-    """Builds backlinks index: {target_filename: [source_relpaths]}."""
+    """Builds backlinks index: {target_relpath: [source_relpaths]}.
+
+    Usa la misma resolución que `graph` (`build_graph`): wikilinks resueltos
+    por ruta antes que por nombre de archivo, y aristas tipadas del
+    frontmatter. Antes resolvía solo por nombre de archivo —un `[[a/x]]`
+    caía en cualquier `x.md`— e ignoraba `links:`, así que marcaba
+    «no backlinks» conceptos que sí los tienen.
+    """
+    from cli.commands.graph import build_graph
+
     index = {}
-    name_index = {}  # filename → relpath
-    for f in find_md_files(vault):
-        name_index[f.name] = str(f.relative_to(vault))
-
-    for f in find_md_files(vault):
-        try:
-            text = f.read_text(encoding="utf-8")
-        except Exception:
-            continue
-
-        wikilinks = re.findall(r'\[\[([^\]|#]+)(?:[|#][^\]]+)?\]\]', text)
-        source_rel = str(f.relative_to(vault))
-
-        for target in wikilinks:
-            target = target.strip()
-            # Intentar resolver: nombre exacto, con .md, path relativo
-            resolved = None
-            if target in name_index:
-                resolved = name_index[target]
-            elif target + ".md" in name_index:
-                resolved = name_index[target + ".md"]
-            else:
-                # Buscar por nombre de archivo (sin path)
-                target_name = Path(target).name
-                if not target_name.endswith(".md"):
-                    target_name += ".md"
-                if target_name in name_index:
-                    resolved = name_index[target_name]
-
-            if resolved:
-                if resolved not in index:
-                    index[resolved] = []
-                if source_rel not in index[resolved]:
-                    index[resolved].append(source_rel)
-
+    for rel, node in build_graph(vault).items():
+        sources = set(node["in"]) | {e["target"] for e in node["typed_in"]}
+        if sources:
+            index[rel] = sorted(sources)
     return index
 
 
