@@ -3,7 +3,7 @@
 Searches a query in:
     1. vault     — wikilinks (backlinks) + content (grep)
     2. code      — ~/.hermes/mcp-servers/okf/**/*.py
-    3. hooks     — .git/hooks/*
+    3. hooks     — el directorio de hooks de git (con core.hooksPath y en worktrees)
     4. cron      — sistema/cron/* + sistema/hermes-cron-jobs/*
     5. agents    — AGENTS.md, CLAUDE.md, .claude/*.md
 
@@ -138,7 +138,11 @@ def run(args, vault, config=None):
                 print("  (no results)")
 
         elif layer == "hooks":
-            hooks_dir = vault_root / ".git" / "hooks"
+            # El directorio que git usa de verdad (core.hooksPath, worktrees) —
+            # la misma resolución que health (fix #30). Hardcodear `.git/hooks`
+            # dejaba este layer ciego en los vaults activados con hooksPath.
+            from cli.commands.health import _hooks_dir
+            hooks_dir = _hooks_dir(vault_root)
             results = _grep_dir(hooks_dir, query, "*")
             if results:
                 for path, line_num, line in results:
