@@ -496,6 +496,18 @@ def run(args, vault, config=None):
         print(f"   Valid: {', '.join(sorted(valid_types))}", file=sys.stderr)
         return 1
 
+    # Máquina de estados del vault (cli/states.py): sin --status, el tipo
+    # arranca en su estado inicial; con --status, tiene que ser uno del
+    # esquema (y un tipo de registro no admite ninguno).
+    from cli.states import check_status, initial_status, schema_for
+    if schema_for(config, concept_type) is not None:
+        if not status:
+            status = initial_status(config, concept_type)
+        else:
+            for problem in check_status(config, concept_type, status):
+                print(f"❌ {problem}", file=sys.stderr)
+                return 1
+
     extra_lines = _parse_extra_fields(getattr(args, "fields", None))
     if extra_lines is None:
         return 1
@@ -630,6 +642,12 @@ def run(args, vault, config=None):
             concept_type, source_path, parsed_links, vault, graph,
             definitions=definitions,
         )
+        if cross_warnings and config is not None and getattr(config, "graph_strict_pairs", False):
+            # graph.strict_pairs: una arista fuera de los pares declarados
+            # no se escribe (mismo criterio que `validate`).
+            for w in cross_warnings:
+                print(f"❌ {w}", file=sys.stderr)
+            return 1
         for w in cross_warnings:
             print(f"⚠️  {w}", file=sys.stderr)
 

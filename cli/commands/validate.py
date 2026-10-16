@@ -12,6 +12,8 @@ Validates that:
 8. The body keeps its content: a body that loses most of its lines vs HEAD
    is rejected (catches an agent rewriting the whole body instead of
    appending)
+9. `status` matches the vault's state schema (`types.states` in config, see
+   cli/states.py): warning by default, error with `types.states.strict`
 
 Unlike parse_frontmatter, it has NO regex fallback.
 If the YAML is broken, it fails.
@@ -338,28 +340,35 @@ def _check_broken_wikilinks(body, rel, vault, fm=None, name_index=None):
     return errors
 
 
-def _check_edge_type_consistency(filepath, vault, definitions=None):
+def _check_edge_type_consistency(filepath, vault, definitions=None, config=None):
     """Detects inconsistencies in typed edges of the links: field.
 
     Verifies:
     - Unrecognized edge types (ERROR — blocking)
     - Mutual exclusion: same target with extiende AND refina (ERROR)
-    - corrige without deprecated target nor cyber.corrected_by (ERROR)
+    - corrige whose target is not in its replaced state nor has
+      cyber.corrected_by (ERROR). «Replaced state» comes from the vault's
+      state schema (cli/states.py); without a schema, the legacy substring
+      heuristic (deprecada / supercedida) applies.
     - Atypical pair (via validate_cross_type_pair) with semantic score
-      (WARNING — informational, scoring-semantico plan: prioritized by score)
+      (WARNING — informational, scoring-semantico plan: prioritized by score;
+      ERROR when the vault sets `graph.strict_pairs: true`)
 
     Args:
         filepath: Path of the file to validate.
         vault: Path to vault root.
         definitions: Optional config-provided edge type definitions. If None,
                      uses the embedded defaults.
+        config: Optional Config (state schema, strict_pairs).
 
     Returns:
         tuple[list[str], list[str]]: (errors, warnings).
     """
     from cli.edge_types import VALID_EDGE_TYPES, validate_cross_type_pair, score_edge
     from cli.frontmatter import parse_frontmatter
+    from cli.states import is_replaced_status
 
+    strict_pairs = bool(getattr(config, "graph_strict_pairs", False)) if config else False
     errors = []
     warnings = []
     try:
@@ -409,10 +418,11 @@ def _check_edge_type_consistency(filepath, vault, definitions=None):
                             isinstance(cyber, dict)
                             and bool(cyber.get("corrected_by"))
                         )
-                        if "deprec" not in status.lower() and "superced" not in status.lower() and not has_cb:
+                        t_type = str(t_fm.get("type", ""))
+                        if not is_replaced_status(config, t_type, status) and not has_cb:
                             errors.append(
                                 f"  links: {rel} corrects '{target}' but the "
-                                f"target is not deprecated (status='{status}')"
+                                f"target is not in its replaced state (status='{status}')"
                             )
                 except Exception:
                     pass
@@ -456,7 +466,10 @@ def _check_edge_type_consistency(filepath, vault, definitions=None):
                 definitions=definitions,
             )
             for w in pair_warnings:
-                warnings.append(f"  {w} [score: {s:.2f}]")
+                line = f"  {w} [score: {s:.2f}]"
+                # graph.strict_pairs: el vault declaró todos sus pares y
+                # quiere que uno fuera de la lista no entre al commit.
+                (errors if strict_pairs else warnings).append(line)
 
     for target, types in types_per_target.items():
         if "extiende" in types and "refina" in types:
@@ -468,7 +481,25 @@ def _check_edge_type_consistency(filepath, vault, definitions=None):
     return errors, warnings
 
 
-def _validate_file(filepath, vault, definitions=None, name_index=None):
+def _check_states(fm, config):
+    """Validation 12: `status` against the vault's state schema (cli/states.py).
+
+    Returns:
+        tuple[list[str], list[str]]: (errors, warnings). Problems are errors
+        when `types.states.strict` is true, warnings otherwise. Without a
+        schema for the type, nothing is checked (legacy behaviour).
+    """
+    from cli.states import check_status, states_strict
+
+    problems = check_status(config, str(fm.get("type", "")), fm.get("status"))
+    if not problems:
+        return [], []
+    if states_strict(config):
+        return problems, []
+    return [], problems
+
+
+def _validate_file(filepath, vault, definitions=None, name_index=None, config=None):
     """Validates the frontmatter and wikilinks of a .md file.
 
     Args:
@@ -477,6 +508,7 @@ def _validate_file(filepath, vault, definitions=None, name_index=None):
         definitions: Optional config-provided edge type definitions. If None,
                      uses the embedded defaults.
         name_index: Shared {filename: relpath} index (built once per run).
+        config: Optional Config (state schema, strict pairs).
 
     Returns:
         tuple[bool, str]: (ok, error_message). ok=True if valid.
@@ -582,15 +614,22 @@ def _validate_file(filepath, vault, definitions=None, name_index=None):
                 "status: supercedida sin 'replaced_by' (protocolo de apoptosis: "
                 "criterios/protocolo-de-apoptosis-muerte-de-conceptos-en-el-vault-okf)")
 
+    # ── Validation 12: status against the state schema (cli/states.py) ──
+    state_errors, state_warnings = _check_states(fm, config)
+    all_errors.extend(state_errors)
+
     # ── Validation 7: typed edge consistency ──
     edge_errors, edge_warnings = _check_edge_type_consistency(
-        filepath, vault, definitions=definitions)
+        filepath, vault, definitions=definitions, config=config)
     if edge_errors:
         all_errors.append(f"inconsistencies in typed links:\n" + "\n".join(edge_errors))
-    if edge_warnings:
+    if edge_warnings or state_warnings:
         # Non-blocking warnings (semantic-scoring plan: atypical pair
-        # prioritized by score) — reported to stderr without aborting.
+        # prioritized by score; state schema in aviso mode) — reported to
+        # stderr without aborting.
         print(f"⚠️  {rel}:", file=sys.stderr)
+        for w in state_warnings:
+            print(f"  {w}", file=sys.stderr)
         for w in edge_warnings:
             print(w, file=sys.stderr)
 
@@ -600,8 +639,8 @@ def _validate_file(filepath, vault, definitions=None, name_index=None):
     return True, ""
 
 
-def _check_superseded_corrige(vault):
-    """Validation 9 (grafo): toda entidad con status: supercedida debe tener
+def _check_superseded_corrige(vault, config=None):
+    """Validation 9 (grafo): toda entidad en su estado de reemplazo debe tener
     una arista tipada 'corrige' entrante declarada por su reemplazo.
 
     Implementa la memoria de errores tipada del grafo (P1-2 del backlog de
@@ -611,10 +650,21 @@ def _check_superseded_corrige(vault):
         links:
           - target: <predecesor.md>
             type: corrige
+
+    Qué cuenta como «estado de reemplazo»: el literal histórico `supercedida`
+    (siempre ERROR, como hasta ahora) y, si el vault declara un esquema de
+    estados (cli/states.py), el `replaced` de la capa del tipo — ERROR con
+    `types.states.strict`, WARNING si no.
+
+    Returns:
+        tuple[list[str], list[str]]: (errors, warnings).
     """
     import yaml
+    from cli.states import is_replaced_status, schema_for, states_strict
+
     errors = []
-    superseded: list[str] = []
+    warnings = []
+    superseded: list[tuple[str, bool]] = []  # (rel, blocking)
     corrige_targets: set[str] = set()
     for f in find_md_files(vault):
         if f.name in EXCLUDE_FILES or f.name == "Untitled.md":
@@ -637,8 +687,12 @@ def _check_superseded_corrige(vault):
             continue
         if not isinstance(fm, dict):
             continue
-        if str(fm.get("status", "")).strip().lower() == "supercedida":
-            superseded.append(rel)
+        status = str(fm.get("status", "")).strip().lower()
+        c_type = str(fm.get("type", ""))
+        if status == "supercedida":
+            superseded.append((rel, True))
+        elif schema_for(config, c_type) is not None and is_replaced_status(config, c_type, status):
+            superseded.append((rel, states_strict(config)))
         links = fm.get("links") or []
         if not isinstance(links, list):
             continue
@@ -648,12 +702,12 @@ def _check_superseded_corrige(vault):
                 if t and not t.endswith(".md"):
                     t += ".md"
                 corrige_targets.add(t)
-    for rel in superseded:
+    for rel, blocking in superseded:
         if rel not in corrige_targets:
-            errors.append(
-                f"{rel}: status supercedida sin arista 'corrige' entrante "
-                "(el reemplazo debe declarar links: [{target: <este>, type: corrige}])")
-    return errors
+            msg = (f"{rel}: en estado de reemplazo sin arista 'corrige' entrante "
+                   "(el reemplazo debe declarar links: [{target: <este>, type: corrige}])")
+            (errors if blocking else warnings).append(msg)
+    return errors, warnings
 
 
 def run(args, vault, config=None):
@@ -708,14 +762,17 @@ def run(args, vault, config=None):
         if not f.exists():
             continue
         is_ok, msg = _validate_file(f, vault, definitions=definitions,
-                                    name_index=name_index)
+                                    name_index=name_index, config=config)
         if is_ok:
             ok_count += 1
         else:
             errors.append(msg)
 
-    # ── Validation 9 (grafo): supercedidas exigen arista corrige entrante ──
-    errors.extend(_check_superseded_corrige(vault))
+    # ── Validation 9 (grafo): reemplazadas exigen arista corrige entrante ──
+    graph_errors, graph_warnings = _check_superseded_corrige(vault, config=config)
+    errors.extend(graph_errors)
+    for w in graph_warnings:
+        print(f"⚠️  {w}", file=sys.stderr)
 
     # Reporte
     if errors:

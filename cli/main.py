@@ -12,6 +12,7 @@ Commands:
     index       Regenerate index.md and log.md
     new         Create a new concept
     touch       Read statistics
+    stamp       Set `timestamp` from the content diff vs HEAD (pre-commit)
     dashboard-snapshot  Generate dashboard.json + daily snapshot
     stale       Semantic staleness detector
     review      Cybernetic review (expired review_on)
@@ -226,6 +227,19 @@ def build_parser():
                               "JSON for lists/dicts; empty value deletes the field")
     sp_edit.add_argument("--dry-run", action="store_true", default=False,
                          help="Preview without writing")
+    sp_edit.add_argument("--force", action="store_true", default=False,
+                         help="Skip the state-schema transition check on --status "
+                              "(migrations)")
+
+    # ── stamp ──
+    sp_stamp = subparsers.add_parser(
+        "stamp",
+        help="Set `timestamp` from the content diff vs HEAD (pre-commit)")
+    sp_stamp.add_argument("targets", nargs="*", type=str,
+                          help="Concept paths relative to the vault")
+    sp_stamp.add_argument("--staged", action="store_true", default=False,
+                          help="Process the .md files staged in git and re-stage "
+                               "the ones adjusted (hook mode)")
 
     # ── touch ──
     sp_touch = subparsers.add_parser("touch", help="Read statistics")
@@ -426,6 +440,9 @@ def main(argv=None):
 
         elif command == "touch":
             from cli.commands.touch import run
+            _exit = run(args, vault, config) or 0
+        elif command == "stamp":
+            from cli.commands.stamp import run
             _exit = run(args, vault, config) or 0
         elif command == "migrate-reads":
             from cli.commands.migrate_reads import run
