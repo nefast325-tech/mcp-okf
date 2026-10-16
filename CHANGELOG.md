@@ -3,6 +3,35 @@
 Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a Changelog](https://keepachangelog.com/).
 
 ---
+## [2026-10-16] — v0.4.24
+
+Estado de los conceptos declarado en el vault (PR #31, Medardo Rafael Hernandez Franco).
+
+### Added
+- **Máquina de estados por tipo, declarada en la config** (`types.states.schemas`, agrupada por capa): `types`, `states`, `initial`, `transitions`, `replaced` (el estado que exige un `corrige` entrante) y `pending` (lo que `stale` cuenta como sin resolver). `states: []` = capa de registro, no lleva `status`. `types.states.strict` (default `false`) decide aviso o error.
+- `new` sin `--status` arranca en el estado inicial del tipo; con `--status`, el valor tiene que estar en el esquema. Un tipo de registro no admite ninguno.
+- `edit --status` valida el estado y la transición desde el actual; `--force` salta la transición (migraciones).
+- `graph.inherit_default_pairs: false` deja fuera los `valid_pairs` embebidos —usan el vocabulario de **un** vault (`LeccionAprendida`, no `Lesson`)— para que cada vault declare los suyos con sus propios nombres de tipo, conservando descripción, transitividad e inversa.
+- `graph.strict_pairs: true`: un par (tipo origen, tipo destino) fuera de los declarados pasa de aviso a error en `validate`, y `new`/`edit` no escriben la arista.
+- **`okf stamp [--staged]`**: fija `timestamp` desde el diff de contenido contra `HEAD` — si el cuerpo, el `title` o la `description` cambiaron y el timestamp quedó igual al de `HEAD`, lo renueva; si no cambió el contenido y el timestamp sí, restaura el de `HEAD`; los archivos nuevos no se tocan. Con `--staged` vuelve a stagear lo que ajustó, para el pre-commit.
+
+### Changed
+- **`timestamp` mide el contenido, no los metadatos**: `edit` lo renueva solo si cambian `body`, `title` o `description`. Un cambio solo de `status`, tags, aristas o campos custom ya no lo renueva. Aplica **también sin esquema** — es un cambio global, no una rama opt-in (verificado sobre un vault sin `types.states`: antes `Changes: status, timestamp`, ahora `Changes: status` con la fecha intacta).
+- **`stale` señal 3** (`ghost proposal`) lee `pending` del esquema del tipo; sin esquema, el literal histórico `propuesta`. **Señal 6** exige status a cualquier tipo con estados declarados; sin esquema, a `Decision`.
+- **La regla de `corrige` mira el estado `replaced`** de la capa del destino en vez de la subcadena; sin esquema conserva la heurística histórica (`deprec`/`superced`). Una nota en estado de reemplazo sin `corrige` entrante avisa (error con `strict`); el literal `supercedida` sigue siendo error, como hasta ahora. Con esquema en modo aviso no bloquea, porque el vault está migrando.
+- La validación 12 de `validate` (status contra el esquema) se suma a las existentes; sin esquema no comprueba nada.
+
+### Medido (2026-10-16)
+- Suite: **396 → 439** (43 nuevos). Revirtiendo `cli/` a `master`, los nuevos dan 24 fallos + 3 errores: no son vacíos.
+- `validate --all` y `stale --json` sobre `OKF-Vault` (699 archivos, sin `types.states`): salida **idéntica** a v0.4.23. La rama opt-in no cambia nada sin esquema.
+- Con esquema en un vault de prueba: `new` siembra el inicial, `edit --status` rechaza estado fuera del esquema y transición no declarada (`superada → vigente` bloquea, `--force` pasa), `validate` avisa con `strict: false` y bloquea con `true`, y la capa de registro avisa si lleva status.
+- Los tres casos de `stamp` verificados en un repo de prueba (contenido cambió, solo metadatos, archivo nuevo).
+- El check `Timestamp↔git` de `health` no se rompe: solo alerta si el timestamp va en el futuro respecto al último commit o más de 30 días antes del primero, y no renovar en cambios de metadatos va en la dirección segura.
+
+### Known follow-up
+- `dashboard_snapshot._collect_stale_results` llama a `collect_stale(...)` **sin** el nuevo `config=`, así que un vault con esquema haría divergir el panel DashboardView de `stale` y `board` (mismo vault, `ATTENTION` ↔ `STALE`). Inerte sin esquema. Repro en el comentario de revisión del PR #32.
+
+---
 ## [2026-10-15] — v0.4.23
 
 ### Changed
