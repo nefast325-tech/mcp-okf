@@ -322,8 +322,27 @@ def _check_scripts(vault, smoke_entry_point="tp3-cibernetico"):
 
 # ── Check 6: Git hook ──
 
+def _hooks_dir(vault):
+    """Directorio de hooks que usa git de verdad.
+
+    `git rev-parse --git-path hooks` respeta `core.hooksPath` y los worktrees
+    (donde `.git` es un archivo). Sin git a mano, cae al lugar por defecto.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-path", "hooks"],
+            capture_output=True, text=True, timeout=5, cwd=str(vault),
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            path = Path(result.stdout.strip())
+            return path if path.is_absolute() else vault / path
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return vault / ".git" / "hooks"
+
+
 def _check_git_hook(vault):
-    hook = vault / ".git" / "hooks" / "pre-commit"
+    hook = _hooks_dir(vault) / "pre-commit"
     if not hook.exists():
         return False, "pre-commit hook does not exist"
     if not os.access(hook, os.X_OK):
