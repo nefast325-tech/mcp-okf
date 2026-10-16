@@ -486,22 +486,31 @@ def _check_edge_type_consistency(filepath, vault, definitions=None, config=None)
     return errors, warnings
 
 
-def _check_states(fm, config):
-    """Validation 12: `status` against the vault's state schema (cli/states.py).
+def _check_states(fm, config, text=None):
+    """Validation 12: `status` against the vault's state schema (cli/states.py),
+    and the body's checkboxes against the state (`done` states must not have
+    open checkboxes).
 
     Returns:
         tuple[list[str], list[str]]: (errors, warnings). Problems are errors
         when `types.states.strict` is true, warnings otherwise. Without a
         schema for the type, nothing is checked (legacy behaviour).
     """
-    from cli.states import check_status, states_strict
+    from cli.states import check_status, check_checkboxes, states_strict
 
-    problems = check_status(config, str(fm.get("type", "")), fm.get("status"))
-    if not problems:
-        return [], []
+    ctype = str(fm.get("type", ""))
+    problems = check_status(config, ctype, fm.get("status"))
+    warnings = []
+    if text is not None:
+        # Las casillas acotan el estado (esquema `done`): terminado con
+        # casillas abiertas es problema; inicial con marcadas, aviso.
+        from cli.commands.stale import count_checkboxes
+        checked, open_, _ = count_checkboxes(text)
+        p2, warnings = check_checkboxes(config, ctype, fm.get("status"), checked, open_)
+        problems = problems + p2
     if states_strict(config):
-        return problems, []
-    return [], problems
+        return problems, warnings
+    return [], problems + warnings
 
 
 def _validate_file(filepath, vault, definitions=None, name_index=None, config=None):
@@ -620,7 +629,7 @@ def _validate_file(filepath, vault, definitions=None, name_index=None, config=No
                 "criterios/protocolo-de-apoptosis-muerte-de-conceptos-en-el-vault-okf)")
 
     # ── Validation 12: status against the state schema (cli/states.py) ──
-    state_errors, state_warnings = _check_states(fm, config)
+    state_errors, state_warnings = _check_states(fm, config, text)
     all_errors.extend(state_errors)
 
     # ── Validation 7: typed edge consistency ──

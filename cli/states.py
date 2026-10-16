@@ -55,8 +55,38 @@ def schema_for(config, concept_type):
                 "transitions": schema.get("transitions") or {},
                 "replaced": schema.get("replaced"),
                 "pending": [str(s) for s in (schema.get("pending") or [])],
+                "done": [str(s) for s in (schema.get("done") or [])],
             }
     return None
+
+
+def check_checkboxes(config, concept_type, status, checked, open_):
+    """Las casillas del cuerpo acotan el estado (capa de trabajo).
+
+    `done` en el esquema nombra los estados que significan «terminado»
+    (p. ej. `hecha`; `cancelada` no, porque cancelar deja cosas sin hacer).
+
+    - Terminado con casillas abiertas → problema (error con strict). Cerrar
+      una nota es decisión de alguien, pero no puede contradecir su lista.
+    - Inicial con casillas ya marcadas → aviso siempre: algo empezó y el
+      estado no lo dice.
+
+    Returns:
+        tuple[list[str], list[str]]: (problemas, avisos).
+    """
+    schema = schema_for(config, concept_type)
+    if schema is None or not schema["states"]:
+        return [], []
+    value = str(status).strip() if status is not None else ""
+    problems, warnings = [], []
+    if value in schema["done"] and open_ > 0:
+        problems.append(f"'{concept_type}' en '{value}' con {open_} casilla(s) abierta(s): "
+                        "marcalas, tachalas con su motivo o devolvé la nota a un estado activo")
+    initial = str(schema["initial"] or schema["states"][0])
+    if value == initial and checked > 0 and schema["done"]:
+        warnings.append(f"'{concept_type}' en '{value}' con {checked} casilla(s) ya marcada(s): "
+                        "parece que empezó")
+    return problems, warnings
 
 
 def requires_status(config, concept_type):
