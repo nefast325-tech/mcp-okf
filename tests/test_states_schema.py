@@ -186,10 +186,21 @@ class TestValidateAviso(VaultBase):
         self.assertEqual(code, 0)
         self.assertNotIn("not in its replaced state", out)
 
-    def test_corrige_hacia_nota_vigente_es_error(self):
+    def test_corrige_hacia_nota_vigente_es_aviso_mientras_se_migra(self):
+        # Con esquema y strict: false el vault está migrando (p. ej. targets
+        # todavía en «deprecada»): el corrige no bloquea el commit.
         _concept(self.vault, "insights/vieja.md", "Insight", status="vigente")
         _concept(self.vault, "insights/nueva.md", "Insight", status="vigente",
                  links=[("insights/vieja.md", "corrige")])
+        code, out = self._validate_all()
+        self.assertEqual(code, 0)
+        self.assertIn("not in its replaced state", out)
+
+    def test_corrige_sin_esquema_sigue_siendo_error(self):
+        # Plan no tiene esquema: vale la regla histórica, bloqueante.
+        _concept(self.vault, "plans/viejo.md", "Plan", status="activa")
+        _concept(self.vault, "plans/nuevo.md", "Plan", status="activa",
+                 links=[("plans/viejo.md", "corrige")])
         code, out = self._validate_all()
         self.assertEqual(code, 1)
         self.assertIn("not in its replaced state", out)
@@ -197,6 +208,14 @@ class TestValidateAviso(VaultBase):
 
 class TestValidateStrict(VaultBase):
     strict = True
+
+    def test_corrige_hacia_nota_vigente_es_error(self):
+        _concept(self.vault, "insights/vieja.md", "Insight", status="vigente")
+        _concept(self.vault, "insights/nueva.md", "Insight", status="vigente",
+                 links=[("insights/vieja.md", "corrige")])
+        code, out = self._validate_all()
+        self.assertEqual(code, 1)
+        self.assertIn("not in its replaced state", out)
 
     def test_fuera_del_esquema_es_error(self):
         _concept(self.vault, "insights/a.md", "Insight", status="activa")

@@ -366,7 +366,7 @@ def _check_edge_type_consistency(filepath, vault, definitions=None, config=None)
     """
     from cli.edge_types import VALID_EDGE_TYPES, validate_cross_type_pair, score_edge
     from cli.frontmatter import parse_frontmatter
-    from cli.states import is_replaced_status
+    from cli.states import is_replaced_status, schema_for, states_strict
 
     strict_pairs = bool(getattr(config, "graph_strict_pairs", False)) if config else False
     errors = []
@@ -420,7 +420,12 @@ def _check_edge_type_consistency(filepath, vault, definitions=None, config=None)
                         )
                         t_type = str(t_fm.get("type", ""))
                         if not is_replaced_status(config, t_type, status) and not has_cb:
-                            errors.append(
+                            # Con esquema en modo aviso (strict: false) el
+                            # vault está migrando: no bloquea. Sin esquema,
+                            # o con strict, es error como siempre.
+                            blocking = (schema_for(config, t_type) is None
+                                        or states_strict(config))
+                            (errors if blocking else warnings).append(
                                 f"  links: {rel} corrects '{target}' but the "
                                 f"target is not in its replaced state (status='{status}')"
                             )
