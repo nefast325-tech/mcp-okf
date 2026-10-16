@@ -3,6 +3,26 @@
 Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a Changelog](https://keepachangelog.com/).
 
 ---
+## [2026-10-16] — v0.4.26
+
+`okf board` (PR #32) y el detector de obsolescencia con una sola vara.
+
+### Added
+- **`okf board [--out] [--iniciativa X] [--no-tasks]`**: el vault como JSON de tablero en una sola pasada — `columnas` (los estados de cada capa según `types.states`), `tarjetas` (un concepto tipado por tarjeta, fuera de la capa de registro, con capa, status, `iniciativa`, casillas hechas/total, edad y nivel de `stale`), `tareas` (casillas abiertas con antigüedad, reutiliza `search.find_todos`) y `salud` (conteo por capa y estado). `--iniciativa` filtra por el campo; sin esquema de estados sigue funcionando con una capa `sin-esquema` y los status observados (PR #32, Medardo Rafael Hernandez Franco; 7 tests).
+
+### Fixed
+- **`dashboard_snapshot` no le pasaba `config` a `collect_stale`**: el detector caía en los literales legacy (señal 3 = `propuesta`, señal 6 = Decision) mientras `stale` y `board` leían el esquema del vault. Medido en `OKF-Vault` con el esquema activo: **72 de 700 conceptos divergían** — el panel del DashboardView daba ATTENTION donde el CLI daba STALE—. Misma clase que el #21, el #29 y el #30.
+- **`collect_stale(vault, config=cfg)` ignoraba la lista de exentos del vault** (`types.exempt_from_no_backlinks`) y usaba la embebida en silencio: el resultado dependía de CÓMO se llamaba a la función y no de la config. Ahora, con `config`, manda la lista del vault.
+
+### Medido (2026-10-16, OKF-Vault con los dos strict activos)
+- `board`: **565 tarjetas, 271 tareas, cuatro capas** (conocimiento 4 estados, compromiso 4, trabajo 5, infra 3).
+- El desajuste `salud.por_estado` vs `columnas` **no puede ocurrir** con `types.states.strict: true`: toda tarjeta tiene un estado declarado por su capa (0 casos, 0 tarjetas sin status).
+- `stale` y el panel: **0 divergencias** entre 700 conceptos (eran 72). STALE 6, ATTENTION 291.
+
+### Tests
+- **451** (443 en v0.4.25): +7 del board, +1 de paridad panel/CLI.
+
+---
 ## [2026-10-16] — v0.4.25
 
 El destino de una arista se resuelve como el resto del CLI (PR #33).

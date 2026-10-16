@@ -554,6 +554,14 @@ def _collect_stale_results(vault, config):
             config.stale_problem_patterns, config.stale_reads_zero_min_days,
             config.types_exempt_from_no_backlinks,
             config.stale_propuesta_days_insight,
+            # La config COMPLETA tiene que llegar al detector, no solo sus
+            # umbrales: sin `config=`, `collect_stale` cae en los literales
+            # legacy (señal 3 = `propuesta`, señal 6 = Decision) mientras
+            # `stale` y `board` leen el esquema del vault. Medido en OKF-Vault
+            # con el esquema activo: 72 de 700 conceptos divergían —el panel
+            # daba ATTENTION donde el CLI daba STALE—. Misma clase que el #21,
+            # el #29 y el #30.
+            config=config,
         )
     return collect_stale(vault)
 

@@ -161,8 +161,15 @@ def collect_stale(vault, timestamp_days=90, propuesta_days=30,
     de acción — decisión 2026-09-05 del triaje dreaming).
     """
     if exempt_no_backlinks is None:
-        from cli.config import DEFAULTS
-        exempt_no_backlinks = set(DEFAULTS["types"]["exempt_from_no_backlinks"])
+        # Con config, la lista del vault manda: la embebida usa el vocabulario de
+        # otro vault. Sin esto, `collect_stale(vault, config=cfg)` tomaba la
+        # embebida en silencio y el resultado dependía de CÓMO se llamó a la
+        # función, no de la config (misma clase que el #21, el #29 y el #30).
+        if config is not None:
+            exempt_no_backlinks = set(config.types_exempt_from_no_backlinks)
+        else:
+            from cli.config import DEFAULTS
+            exempt_no_backlinks = set(DEFAULTS["types"]["exempt_from_no_backlinks"])
     else:
         exempt_no_backlinks = set(exempt_no_backlinks)
     # Señales 3 y 6 leen la máquina de estados del vault (cli/states.py):
