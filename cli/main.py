@@ -13,6 +13,7 @@ Commands:
     new         Create a new concept
     touch       Read statistics
     stamp       Set `timestamp` from the content diff vs HEAD (pre-commit)
+    board       JSON of the vault as a board (Kanban, tasks, health per layer)
     dashboard-snapshot  Generate dashboard.json + daily snapshot
     stale       Semantic staleness detector
     review      Cybernetic review (expired review_on)
@@ -231,6 +232,17 @@ def build_parser():
                          help="Skip the state-schema transition check on --status "
                               "(migrations)")
 
+    # ── board ──
+    sp_board = subparsers.add_parser(
+        "board", help="JSON del vault como tablero (Kanban de la capa de trabajo, "
+                      "tareas con antigüedad, salud por capa)")
+    sp_board.add_argument("--out", type=str, default=None,
+                          help="Write the JSON to this path (default: stdout)")
+    sp_board.add_argument("--iniciativa", type=str, default=None,
+                          help="Only cards and tasks whose `iniciativa` field has this value")
+    sp_board.add_argument("--no-tasks", action="store_true", default=False,
+                          help="Skip the checkbox tasks section")
+
     # ── stamp ──
     sp_stamp = subparsers.add_parser(
         "stamp",
@@ -443,6 +455,9 @@ def main(argv=None):
             _exit = run(args, vault, config) or 0
         elif command == "stamp":
             from cli.commands.stamp import run
+            _exit = run(args, vault, config) or 0
+        elif command == "board":
+            from cli.commands.board import run
             _exit = run(args, vault, config) or 0
         elif command == "migrate-reads":
             from cli.commands.migrate_reads import run
