@@ -3,6 +3,25 @@
 Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a Changelog](https://keepachangelog.com/).
 
 ---
+## [2026-10-15] — v0.4.23
+
+### Changed
+- **Los tipos exentos de la señal 4 de `stale` («no backlinks») salen de config: `types.exempt_from_no_backlinks`** (con default embebido). La lista estaba hardcodeada con el vocabulario de **un** vault —`("MarcoTeorico", "Spec", "Tool", "Agente", "Sesion")`— mientras `types.valid` sí es configurable: en el vault del cliente, donde el tipo es `Session` y no `Sesion`, 9 sesiones entraban como señal 4 y el mismo número significaba cosas distintas en cada vault. El default embebido es el set del Criterio de obsolescencia más los dialectos conocidos: `MarcoTeorico, Spec, Tool, Agente, Sesion, Session, Skill, Insight`.
+- **Señal 3: el umbral de `status: propuesta` para `type: Insight` sube a 90 días** (`stale.propuesta_days_insight`, default 90) y el resto de los tipos mantiene 30. Es la decisión del triaje automático del subgrafo dreaming (2026-09-05): una hipótesis tiene más vida que una propuesta de acción, su ciclo es integrarse o archivarse, no «aplicarse». Cierra N1 y N2 del plan del ajuste del detector, en propuesta desde el 2026-09-05.
+- `dashboard_snapshot` comparte ahora la config completa del detector: antes omitía `stale.reads_zero_min_days` y no podía ver los exentos, así que su distribución podía contradecir a `stale` (misma clase que el #21 y el #29).
+
+### Fixed
+- Dos tests de `test_stale_reads_store.py` usaban `type: Insight` para fabricar el caso de 3 señales. Con `Insight` exento de la señal 4 ese camino ya no existe: el caso se prueba con un tipo no exento (`Research`). El contrato del store de lecturas no cambia.
+
+### Medido (2026-10-15, sobre los vaults reales)
+| Vault | Señal 4 | STALE | ATTENTION | FRESCO |
+|---|---|---|---|---|
+| `OKF-Vault` (698 conceptos) | 110 → **67** | 9 → **2** | 357 → **317** | 332 → **379** |
+| `skynet` (238 conceptos) | 43 → **26** | 0 → 0 | 62 → **44** | 176 → **194** |
+
+Tests: 396 (11 nuevos; RED 5 fallos + 2 errores contra el código anterior), verdes también en entorno limpio tipo CI (`env -i` + venv scratch).
+
+---
 ## [2026-10-15] — v0.4.22
 
 ### Fixed
