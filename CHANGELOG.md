@@ -3,6 +3,24 @@
 Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a Changelog](https://keepachangelog.com/).
 
 ---
+## [2026-10-16] — v0.4.25
+
+El destino de una arista se resuelve como el resto del CLI (PR #33).
+
+### Fixed
+- **`validate` resolvía el destino de una arista con `vault / target` a secas**, sin el fallback de `.md`, mientras el resto del CLI acepta targets sin extensión (`resolve_link`). Un link `target: decisions/otra-nota` —como los escribe el vault OKF— no resolvía: el tipo del destino quedaba en `'?'` y **el par era imposible de declarar** en `valid_pairs`, así que `graph.strict_pairs: true` era inalcanzable en un vault que escribe targets sin extensión. Medido en `OKF-Vault`: **6 de 148** aristas atípicas estaban en ese estado (`Harness aplica ?`, `Plan aplica ?`, `Project aplica ?`, `Harness depende ?`, `Skill depende ?`) y ninguna se podía declarar.
+- La misma resolución estaba mal en la rama de **`corrige`**: no leía el destino, así que no comprobaba que estuviera en su estado de reemplazo.
+
+### Changed
+- Las dos ramas usan `_resolve_edge_target`, que reusa `resolve_link`: la MISMA resolución que `graph` y que el chequeo de wikilinks (misma clase que el #29 y el #30 — una sola resolución por concepto), con fallback al path pelado y a `.md` para targets fuera de alcance.
+
+### Tests
+- `tests/test_validate_edge_target_sin_extension.py` (+4): par declarado con target sin `.md` no avisa; par atípico con target sin `.md` reporta el tipo real (no `'?'`); con `strict_pairs` es error; un target inexistente sigue siendo `'?'`.
+- Suite: **443** (439 en v0.4.24).
+
+**Verificado de punta a punta:** con este fix, `OKF-Vault` declaró sus 143 pares y activó `graph.strict_pairs: true` + `types.states.strict: true` con `validate --all` en **701/701, 0 avisos**.
+
+---
 ## [2026-10-16] — v0.4.24
 
 Estado de los conceptos declarado en el vault (PR #31, Medardo Rafael Hernandez Franco).
