@@ -3,6 +3,22 @@
 Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a Changelog](https://keepachangelog.com/).
 
 ---
+## [2026-10-15] — v0.4.22
+
+### Fixed
+- **`health` buscaba el hook siempre en `<vault>/.git/hooks/pre-commit`** (#30). Con `core.hooksPath hooks` —la activación que recomienda el `CLAUDE.md` de `skynet-vault`— o dentro de un worktree (donde `.git` es un archivo), un vault sano daba **7/8** con «pre-commit hook does not exist» aunque el hook existiera y corriera: como ese hook termina en `health --strict`, **el commit quedaba abortado** y no había forma de commitear con la configuración recomendada. Repro medido en un clon nuevo del vault: 7/8 sin el fix, 8/8 con él. `_hooks_dir(vault)` le pregunta a git con `git rev-parse --git-path hooks`; `dashboard_snapshot` hereda el arreglo porque importa la misma función. `tests/test_health_git_hook_hookspath.py` (+5).
+- **`trace --layers hooks` seguía leyendo `.git/hooks` a mano** (misma clase que el #30, cerrada en el mismo lote): en un vault con `core.hooksPath` respondía «(no results)» en silencio aunque el hook existiera — demostrado en vivo sobre `skynet` antes y después. Ahora usa `_hooks_dir` de `health`: **un solo lugar decide dónde vive el hook**. `tests/test_trace_hooks_dir.py` (+4, RED 3/4 contra el código anterior).
+- **La señal 4 de `stale` («no backlinks») resolvía los wikilinks por nombre de archivo e ignoraba las aristas tipadas** (#29), así que contradecía a `graph`. Medido sobre `skynet` (239 conceptos, 2026-10-15): 51 conceptos marcados antes, 34 después — **17 falsos positivos corregidos (33 %)**, 12 por aristas tipadas y 5 por basenames repetidos (`[[projects/x/x]]` caía en cualquier `x.md` y la ficha real quedaba huérfana). `build_backlinks_index` usa ahora `build_graph`, la misma resolución que `graph`. Costo: `stale` pasa de ~0.5 s a ~0.68 s en 239 conceptos, porque construye el grafo completo (aceptable a esta escala). `tests/test_stale_backlinks.py` (+3).
+
+### Changed
+- El check del hook de `health` incluye en el mensaje **la ruta donde buscó** («looked in …»): un 7/8 se diagnostica sin leer el código (sugerencia del autor del #30).
+
+Tests: 385.
+
+### Fuera de alcance (verificado, no incluido)
+- La tupla de tipos «naturalmente huérfanos» de la señal 4 lista `Sesion`, pero el vault usa `type: Session` (15 conceptos, 9 sin backlinks): esos siguen contando como «no backlinks». Es la diferencia entre los 60 que reporta el CLI y los 51 del conteo sin sesiones. `tests/test_dashboard_snapshot_conceptos.py:73` fija la premisa con el typo. Decisión de producto pendiente (¿una sesión sin backlinks es señal de staleness?), fuera de este release.
+
+---
 ## [2026-10-01] — v0.4.21
 
 ### Fixed
