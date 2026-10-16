@@ -148,8 +148,22 @@ def build_backlinks_index(vault):
 
 def collect_stale(vault, timestamp_days=90, propuesta_days=30,
                   no_commits_days=180, checkbox_ratio=0.7,
-                  problem_patterns=None, reads_zero_min_days=30):
-    """Scans all concepts and evaluates staleness signals."""
+                  problem_patterns=None, reads_zero_min_days=30,
+                  exempt_no_backlinks=None, propuesta_days_insight=90):
+    """Scans all concepts and evaluates staleness signals.
+
+    `exempt_no_backlinks` es el set de tipos exentos de la señal 4
+    («no backlinks»). Vive en config (`types.exempt_from_no_backlinks`)
+    porque el vocabulario de tipos es del vault; sin argumento vale el
+    default embebido. `propuesta_days_insight` es el umbral de la señal 3
+    para `type: Insight` (90 días: una hipótesis vive más que una propuesta
+    de acción — decisión 2026-09-05 del triaje dreaming).
+    """
+    if exempt_no_backlinks is None:
+        from cli.config import DEFAULTS
+        exempt_no_backlinks = set(DEFAULTS["types"]["exempt_from_no_backlinks"])
+    else:
+        exempt_no_backlinks = set(exempt_no_backlinks)
     today = get_today()
     backlinks = build_backlinks_index(vault)
     reads_index = get_reads(vault)
@@ -178,6 +192,9 @@ def collect_stale(vault, timestamp_days=90, propuesta_days=30,
         commit_age = days_ago(last_commit, today) if last_commit else None
         # Edad efectiva: timestamp propio si lo hay, si no la del último commit.
         concept_age = ts_age if ts_age is not None else commit_age
+        # Tipo del concepto: lo usan las señales 3 (umbral por tipo) y 4
+        # (exención por vocabulario del vault).
+        concept_type = str(fm.get("type", ""))
 
         # ── Señal 1: timestamp antiguo ──
         if ts_age is not None and ts_age > timestamp_days:
@@ -198,17 +215,21 @@ def collect_stale(vault, timestamp_days=90, propuesta_days=30,
         # ── Señal 3: status: propuesta sin resolver ──
         status = fm.get("status", "")
         if str(status).lower() == "propuesta":
+            # Un Insight es una hipótesis: su ciclo es integrarse o archivarse,
+            # no "aplicarse", así que tiene más vida que una propuesta de
+            # acción (decisión 2026-09-05, umbral configurable).
+            umbral = propuesta_days_insight if concept_type == "Insight" else propuesta_days
             if ts_age is not None:
-                if ts_age > propuesta_days:
+                if ts_age > umbral:
                     signals.append(f"proposal unresolved ({ts_age}d)")
             else:
                 signals.append("proposal missing timestamp")
 
         # ── Señal 4: sin backlinks ──
         if rel not in backlinks or len(backlinks[rel]) == 0:
-            # Excluir conceptos raíz que son naturalmente huérfanos
-            concept_type = str(fm.get("type", ""))
-            if concept_type not in ("MarcoTeorico", "Spec", "Tool", "Agente", "Sesion"):
+            # Los tipos exentos son vocabulario del vault, no del código:
+            # salen de config (types.exempt_from_no_backlinks).
+            if concept_type not in exempt_no_backlinks:
                 signals.append("no backlinks")
 
         # ── Señal 5: sin commits ──
@@ -272,10 +293,13 @@ def run(args, vault, config=None):
     checkbox_ratio = config.stale_checkbox_ratio if config else 0.7
     problem_patterns = config.stale_problem_patterns if config else None
     reads_zero_min_days = config.stale_reads_zero_min_days if config else 30
+    propuesta_days_insight = config.stale_propuesta_days_insight if config else 90
+    exempt_no_backlinks = config.types_exempt_from_no_backlinks if config else None
 
     results = collect_stale(vault, timestamp_days, propuesta_days,
                             no_commits_days, checkbox_ratio, problem_patterns,
-                            reads_zero_min_days)
+                            reads_zero_min_days,
+                            exempt_no_backlinks, propuesta_days_insight)
 
     if json_out:
         print(json.dumps(results, ensure_ascii=False, indent=2))

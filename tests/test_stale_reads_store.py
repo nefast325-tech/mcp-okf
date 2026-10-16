@@ -37,11 +37,11 @@ def _iso(days_ago):
     return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
 
 
-def _concept(path, days_old, extra_fm=""):
+def _concept(path, days_old, extra_fm="", ctype="Insight"):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "---\n"
-        "type: Insight\n"
+        f"type: {ctype}\n"
         'title: "Test"\n'
         'description: "test"\n'
         f'timestamp: "{_iso(days_old)}"\n'
@@ -151,8 +151,11 @@ class StaleReadsSignalTests(unittest.TestCase):
 
     def test_no_backlinks_and_no_commits_plus_reads_makes_stale(self):
         # En un vault de prueba sin git: no backlinks + no commits (new?) + reads=0
-        rel = "insights/viejo.md"
-        _concept(self.vault / rel, days_old=60)
+        # Tipo NO exento: `Insight` dejó de sumar la señal 4 (decisión del
+        # triaje dreaming, implementada 2026-10-15 en types.exempt_from_no_backlinks),
+        # así que la combinación de 3 señales se prueba con un tipo que sí la suma.
+        rel = "research/viejo.md"
+        _concept(self.vault / rel, days_old=60, ctype="Research")
         results = collect_stale(self.vault)
         r = next(x for x in results if x["file"] == rel)
         self.assertGreaterEqual(r["signal_count"], 3)
@@ -184,8 +187,9 @@ class StaleReadsSignalTests(unittest.TestCase):
         self.assertEqual(len(_reads_signals(_signals(data, rel))), 1)
 
     def test_run_text_exit_code_reflects_config(self):
-        rel = "insights/nuevo.md"
-        _concept(self.vault / rel, days_old=2)
+        # Tipo no exento de la señal 4 (ver el test de las 3 señales).
+        rel = "research/nuevo.md"
+        _concept(self.vault / rel, days_old=2, ctype="Research")
 
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

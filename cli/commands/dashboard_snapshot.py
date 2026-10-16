@@ -551,7 +551,9 @@ def _collect_stale_results(vault, config):
         return collect_stale(
             vault, config.stale_timestamp_days, config.stale_propuesta_days,
             config.stale_no_commits_days, config.stale_checkbox_ratio,
-            config.stale_problem_patterns,
+            config.stale_problem_patterns, config.stale_reads_zero_min_days,
+            config.types_exempt_from_no_backlinks,
+            config.stale_propuesta_days_insight,
         )
     return collect_stale(vault)
 

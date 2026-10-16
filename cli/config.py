@@ -40,6 +40,18 @@ DEFAULTS: dict[str, Any] = {
         ],
         "cyber": ["Sistema", "Agente", "Decision", "Plan", "Project", "Insight"],
         "excluded_cyber": ["MarcoTeorico", "LeccionAprendida", "Tool", "Spec"],
+        # Tipos exentos de la señal 4 de `stale` («no backlinks»): conceptos
+        # raíz naturalmente huérfanos. Es configurable porque el vocabulario
+        # es del VAULT, no del código: OKF-Vault usa Sesion/Agente y el vault
+        # del cliente usa Session (decisión 2026-10-15 — el mismo dato con dos
+        # dialectos hacía que el sensor reportara de más). El default embebido
+        # es el set del Criterio de obsolescencia (incluye Skill e Insight)
+        # más los dialectos conocidos; cada vault declara el suyo en
+        # `types.exempt_from_no_backlinks`.
+        "exempt_from_no_backlinks": [
+            "MarcoTeorico", "Spec", "Tool", "Agente", "Sesion", "Session",
+            "Skill", "Insight",
+        ],
         "by_entity": [],
         "directory": {
             "Sistema": "sistema",
@@ -63,6 +75,10 @@ DEFAULTS: dict[str, Any] = {
     "stale": {
         "timestamp_days": 90,
         "propuesta_days": 30,
+        # Un `Insight` con status: propuesta no genera señal 3 hasta los 90
+        # días: una hipótesis tiene más vida que una propuesta de acción
+        # (decisión 2026-09-05, triaje automático del subgrafo dreaming).
+        "propuesta_days_insight": 90,
         "no_commits_days": 180,
         "checkbox_ratio": 0.7,
         # Edad mínima (días) para que la señal "reads=0" cuente. El contador
@@ -286,6 +302,19 @@ class Config:
         return set(self._data["types"]["excluded_cyber"])
 
     @property
+    def types_exempt_from_no_backlinks(self) -> set[str]:
+        """Tipos exentos de la señal 4 de `stale` («no backlinks»).
+
+        Configurable por vault (config `types.exempt_from_no_backlinks`): el
+        vocabulario de tipos es del vault, no del código. Si la config no lo
+        declara, vale el default embebido.
+        """
+        return set(self._data["types"].get(
+            "exempt_from_no_backlinks",
+            DEFAULTS["types"]["exempt_from_no_backlinks"],
+        ))
+
+    @property
     def types_by_entity(self) -> set[str]:
         """Types that group by entity (one subdirectory per instance).
 
@@ -353,6 +382,11 @@ class Config:
     @property
     def stale_propuesta_days(self) -> int:
         return int(self._data["stale"]["propuesta_days"])
+
+    @property
+    def stale_propuesta_days_insight(self) -> int:
+        """Umbral de la señal 3 para `type: Insight` (default 90 días)."""
+        return int(self._data["stale"].get("propuesta_days_insight", 90))
 
     @property
     def stale_no_commits_days(self) -> int:
