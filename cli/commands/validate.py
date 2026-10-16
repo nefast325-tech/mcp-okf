@@ -340,7 +340,32 @@ def _check_broken_wikilinks(body, rel, vault, fm=None, name_index=None):
     return errors
 
 
-def _check_edge_type_consistency(filepath, vault, definitions=None, config=None):
+def _resolve_edge_target(vault, target, current_dir, name_index=None):
+    """Archivo destino de una arista, o None si no existe.
+
+    Usa `resolve_link` —la MISMA resolución que `graph` y que el chequeo de
+    wikilinks— en vez de `vault / target` a secas. Con el path pelado, un
+    target escrito sin `.md` (que este vault usa de forma normal) no resolvía:
+    el tipo del destino quedaba en `'?'` y el par era imposible de declarar en
+    `valid_pairs`, así que `graph.strict_pairs: true` era inalcanzable.
+    """
+    try:
+        from cli.wikilinks import resolve_link
+        rel = resolve_link(target, vault, current_dir, name_index)
+    except Exception:
+        rel = None
+    if rel:
+        cand = vault / rel
+        if cand.exists():
+            return cand
+    for cand in (vault / target, vault / (str(target) + ".md")):
+        if cand.exists():
+            return cand
+    return None
+
+
+def _check_edge_type_consistency(filepath, vault, definitions=None, config=None,
+                                 name_index=None):
     """Detects inconsistencies in typed edges of the links: field.
 
     Verifies:
@@ -406,8 +431,8 @@ def _check_edge_type_consistency(filepath, vault, definitions=None, config=None)
         types_per_target[target].add(edge_type)
 
         if edge_type == "corrige":
-            target_file = vault / target
-            if target_file.exists():
+            target_file = _resolve_edge_target(vault, target, filepath.parent, name_index)
+            if target_file is not None:
                 try:
                     t_text = target_file.read_text(encoding="utf-8")
                     t_fm, _ = parse_frontmatter(t_text)
@@ -435,10 +460,12 @@ def _check_edge_type_consistency(filepath, vault, definitions=None, config=None)
         # Atypical pair with semantic score: non-blocking WARNING.
         # Historical edges may have pairs outside valid_pairs without
         # breaking the commit; the score (0.0-1.0) prioritizes review.
-        target_file = vault / target
+        target_file = _resolve_edge_target(vault, target, filepath.parent, name_index)
         tgt_type = "?"
         tgt_fm = None
         try:
+            if target_file is None:
+                raise FileNotFoundError(target)
             t_text = target_file.read_text(encoding="utf-8")
             tgt_fm, _ = parse_frontmatter(t_text)
             if tgt_fm and tgt_fm.get("type"):
@@ -625,7 +652,8 @@ def _validate_file(filepath, vault, definitions=None, name_index=None, config=No
 
     # ── Validation 7: typed edge consistency ──
     edge_errors, edge_warnings = _check_edge_type_consistency(
-        filepath, vault, definitions=definitions, config=config)
+        filepath, vault, definitions=definitions, config=config,
+        name_index=name_index)
     if edge_errors:
         all_errors.append(f"inconsistencies in typed links:\n" + "\n".join(edge_errors))
     if edge_warnings or state_warnings:
