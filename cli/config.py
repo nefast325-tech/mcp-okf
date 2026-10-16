@@ -53,6 +53,12 @@ DEFAULTS: dict[str, Any] = {
             "Skill", "Insight",
         ],
         "by_entity": [],
+        # Máquina de estados por tipo (ver cli/states.py). Vacío = el status
+        # no se valida, como siempre. Cada vault declara sus capas.
+        "states": {
+            "strict": False,
+            "schemas": {},
+        },
         "directory": {
             "Sistema": "sistema",
             "Agente": "agentes",
@@ -116,6 +122,15 @@ DEFAULTS: dict[str, Any] = {
         # Score semántico mínimo para aplicar sugerencias de aristas tipadas
         # (plan scoring-semantico, 2026-07-30). 0.0 = sin filtro.
         "suggest_min_score": 0.0,
+        # Un par (tipo origen, tipo destino) fuera de valid_pairs es aviso
+        # por defecto. Con strict_pairs: true, `validate` lo rechaza y
+        # new/edit no escriben la arista.
+        "strict_pairs": False,
+        # Los valid_pairs embebidos en cli/edge_types.py usan el vocabulario
+        # de un vault concreto (Criterio, LeccionAprendida, MarcoTeorico…).
+        # Con inherit_default_pairs: false, el vault declara TODOS sus pares
+        # en edge_types.<tipo>.valid_pairs y los embebidos no se unen.
+        "inherit_default_pairs": True,
     },
     "exclude": {
         "files": ["index.md", "log.md", "dashboard.md"],
@@ -329,6 +344,28 @@ class Config:
     def types_directory(self) -> dict[str, str]:
         return dict(self._data["types"]["directory"])
 
+    @property
+    def states_schemas(self) -> dict:
+        """Esquemas de estados por capa (`types.states.schemas`). Vacío si el
+        vault no declara ninguno: el status sigue sin validarse."""
+        states = self._data["types"].get("states") or {}
+        schemas = states.get("schemas") if isinstance(states, dict) else None
+        return dict(schemas) if isinstance(schemas, dict) else {}
+
+    @property
+    def states_strict(self) -> bool:
+        """`types.states.strict`: True = incumplir el esquema es error."""
+        states = self._data["types"].get("states") or {}
+        return bool(states.get("strict", False)) if isinstance(states, dict) else False
+
+    @property
+    def graph_strict_pairs(self) -> bool:
+        return bool(self._data["graph"].get("strict_pairs", False))
+
+    @property
+    def graph_inherit_default_pairs(self) -> bool:
+        return bool(self._data["graph"].get("inherit_default_pairs", True))
+
     def edge_type_definitions(self) -> dict:
         """Effective edge type definitions: embedded defaults + config overrides.
 
@@ -346,6 +383,12 @@ class Config:
         import copy
 
         result = copy.deepcopy(EDGE_TYPE_DEFINITIONS)
+        if not self.graph_inherit_default_pairs:
+            # El vault declara todos sus pares: los embebidos (vocabulario de
+            # otro vault) no se unen. Se conservan descripción, transitividad
+            # e inversa de cada tipo de arista.
+            for defn in result.values():
+                defn["valid_pairs"] = []
         overrides = self._data.get("edge_types", {}) or {}
         for etype, defn in overrides.items():
             if not isinstance(defn, dict):

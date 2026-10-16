@@ -233,13 +233,70 @@ If you use the `cyber` block in your concepts, the MCP can close the loop automa
 `okf_stale` evaluates 7 semantic staleness signals:
 1. Old timestamp (>90 days without meaningful changes)
 2. Few reads (<2 in 90 days)
-3. Ghost proposal (>30 days in "proposed" status)
+3. Ghost proposal (>30 days in a pending status — `propuesta`, or the
+   schema's `pending` states when the type declares one)
 4. Orphan (no incoming or outgoing wikilinks)
 5. No commits (>180 days without commits touching the file)
-6. Decision without status
+6. Type that requires a status and has none (Decision, or any type with a
+   state schema)
 7. Outdated description (checkboxes complete but description still references problems)
 
 Adjust thresholds in `stale.*` of your `.okf.config.yaml`.
+
+### State schema per type
+
+`status` was free text. A vault can declare a state machine per layer of
+types in `types.states`; the CLI then checks it in `validate` (warning by
+default, error with `strict: true`), seeds `new` with the initial state,
+and makes `edit --status` refuse transitions the schema does not allow
+(`--force` skips the check for migrations). Types with `states: []` are
+records and must not carry a status.
+
+```yaml
+types:
+  states:
+    strict: false
+    schemas:
+      conocimiento:
+        types: [Research, Insight, Lesson]
+        initial: vigente
+        states: [vigente, en-revision, superada]
+        transitions:
+          vigente: [en-revision, superada]
+          en-revision: [vigente, superada]
+          superada: [en-revision]
+        replaced: superada        # a `corrige` edge must point to this state,
+                                  # and a note in it needs an incoming `corrige`
+        pending: [en-revision]    # what `stale` signal 3 counts as unresolved
+      registro:
+        types: [Session]
+        states: []
+```
+
+Without a schema nothing changes: the status is not checked and `corrige`
+keeps its legacy substring heuristic (`deprecada` / `supercedida`).
+
+### Edge pairs: strict and vault-declared
+
+`graph.strict_pairs: true` turns an atypical (source type, target type) pair
+into an error in `validate`, and `new`/`edit` refuse to write the edge.
+`graph.inherit_default_pairs: false` drops the embedded `valid_pairs` (they
+use one vault's vocabulary) so the vault declares every pair it uses in
+`edge_types.<type>.valid_pairs`; an edge type with no declared pairs is
+unrestricted, as `corrige` always was.
+
+### `okf stamp` — timestamp follows content
+
+`timestamp` is the last meaningful change. `edit` refreshes it only when the
+body, title or description change, and `okf stamp --staged` applies the same
+rule in the pre-commit hook against HEAD: a body change with an untouched
+timestamp gets today's date; a metadata-only change (status, tags, links)
+with a refreshed timestamp gets HEAD's date back. Add it to your hook before
+`validate`:
+
+```bash
+python3 -m cli --vault "$VAULT" stamp --staged
+```
 
 ## Development
 

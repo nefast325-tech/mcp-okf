@@ -149,7 +149,8 @@ def build_backlinks_index(vault):
 def collect_stale(vault, timestamp_days=90, propuesta_days=30,
                   no_commits_days=180, checkbox_ratio=0.7,
                   problem_patterns=None, reads_zero_min_days=30,
-                  exempt_no_backlinks=None, propuesta_days_insight=90):
+                  exempt_no_backlinks=None, propuesta_days_insight=90,
+                  config=None):
     """Scans all concepts and evaluates staleness signals.
 
     `exempt_no_backlinks` es el set de tipos exentos de la señal 4
@@ -164,6 +165,9 @@ def collect_stale(vault, timestamp_days=90, propuesta_days=30,
         exempt_no_backlinks = set(DEFAULTS["types"]["exempt_from_no_backlinks"])
     else:
         exempt_no_backlinks = set(exempt_no_backlinks)
+    # Señales 3 y 6 leen la máquina de estados del vault (cli/states.py):
+    # sin esquema valen los literales históricos («propuesta», Decision).
+    from cli.states import pending_states, requires_status, schema_for
     today = get_today()
     backlinks = build_backlinks_index(vault)
     reads_index = get_reads(vault)
@@ -212,9 +216,11 @@ def collect_stale(vault, timestamp_days=90, propuesta_days=30,
                 signals.append(f"reads=0 ({concept_age}d)")
                 details["reads"] = 0
 
-        # ── Señal 3: status: propuesta sin resolver ──
+        # ── Señal 3: status pendiente sin resolver ──
+        # Qué cuenta como «pendiente» lo dice el esquema del tipo
+        # (`pending`); sin esquema, el literal histórico «propuesta».
         status = fm.get("status", "")
-        if str(status).lower() == "propuesta":
+        if str(status).lower() in pending_states(config, concept_type):
             # Un Insight es una hipótesis: su ciclo es integrarse o archivarse,
             # no "aplicarse", así que tiene más vida que una propuesta de
             # acción (decisión 2026-09-05, umbral configurable).
@@ -240,9 +246,15 @@ def collect_stale(vault, timestamp_days=90, propuesta_days=30,
         else:
             signals.append("no commits (new?)")
 
-        # ── Señal 6: type Decision sin status ──
-        if str(fm.get("type", "")) == "Decision" and not fm.get("status"):
-            signals.append("decision without status")
+        # ── Señal 6: tipo que exige status y no lo tiene ──
+        # Con esquema: cualquier tipo con estados declarados. Sin esquema:
+        # el literal histórico (Decision).
+        if not fm.get("status"):
+            if schema_for(config, concept_type) is not None:
+                if requires_status(config, concept_type):
+                    signals.append(f"{concept_type.lower()} without status")
+            elif concept_type == "Decision":
+                signals.append("decision without status")
 
         # ── Señal 7: description vs body inconsistency ──
         description = str(fm.get("description", ""))
@@ -299,7 +311,8 @@ def run(args, vault, config=None):
     results = collect_stale(vault, timestamp_days, propuesta_days,
                             no_commits_days, checkbox_ratio, problem_patterns,
                             reads_zero_min_days,
-                            exempt_no_backlinks, propuesta_days_insight)
+                            exempt_no_backlinks, propuesta_days_insight,
+                            config=config)
 
     if json_out:
         print(json.dumps(results, ensure_ascii=False, indent=2))

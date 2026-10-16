@@ -2,8 +2,14 @@
 
 Unlike new (create-only), edit performs a merge: only the fields passed are
 updated; everything else (type, created, cyber block, custom fields) is
-preserved. The `timestamp` field is always refreshed on any real change —
-per OKF v0.1 it represents the last meaningful edit.
+preserved. The `timestamp` field represents the last meaningful edit (OKF
+v0.1): it is refreshed when the CONTENT changes (body, title, description),
+not when only metadata (status, tags, links, custom fields) does — the same
+rule `okf stamp` enforces in the pre-commit hook.
+
+`--status` is checked against the vault's state schema (cli/states.py) when
+the type declares one: unknown states are rejected, and so are transitions
+the schema does not allow, unless `--force` is passed (migrations).
 """
 
 import re
@@ -301,6 +307,14 @@ def run(args, vault, config=None):
         if value is not None:
             value = str(value).strip()
             old = fields.get(field)
+            if field == "status" and value and not getattr(args, "force", False):
+                # Máquina de estados del vault (cli/states.py): estado
+                # válido para el tipo y transición permitida desde el actual.
+                from cli.states import check_transition
+                problem = check_transition(config, concept_type, old, value)
+                if problem:
+                    print(f"❌ {problem} (usá --force para una migración)", file=sys.stderr)
+                    return 1
             if value == "":
                 if old is not None:
                     fields.pop(field, None)
@@ -361,6 +375,12 @@ def run(args, vault, config=None):
         except ValueError as e:
             print(f"❌ {e}", file=sys.stderr)
             return 1
+        if warnings and config is not None and getattr(config, "graph_strict_pairs", False):
+            # graph.strict_pairs: una arista fuera de los pares declarados
+            # no se escribe (mismo criterio que `validate`).
+            for w in warnings:
+                print(f"❌ {w}", file=sys.stderr)
+            return 1
         for w in warnings:
             print(f"⚠️  {w}", file=sys.stderr)
         if fields.get("links") != parsed_links:
@@ -385,9 +405,12 @@ def run(args, vault, config=None):
         print(f"ℹ️  No changes requested for {filepath}")
         return 0
 
-    # ── timestamp: refresh on every real edit (last meaningful change) ──
-    fields["timestamp"] = _colombia_now()
-    changed.append("timestamp")
+    # ── timestamp: refresh only when CONTENT changed (last meaningful change) ──
+    # Un cambio de status, tags, aristas o campos custom no renueva la fecha:
+    # `timestamp` mide cuándo cambió lo que la nota dice, no sus metadatos.
+    if any(c in ("body", "title", "description") for c in changed):
+        fields["timestamp"] = _colombia_now()
+        changed.append("timestamp")
 
     links_out = fields.get("links") or []
     frontmatter = _serialize(fields, links_out)
