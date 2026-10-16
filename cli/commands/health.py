@@ -342,9 +342,12 @@ def _hooks_dir(vault):
 
 
 def _check_git_hook(vault):
-    hook = _hooks_dir(vault) / "pre-commit"
+    hooks_dir = _hooks_dir(vault)
+    hook = hooks_dir / "pre-commit"
     if not hook.exists():
-        return False, "pre-commit hook does not exist"
+        # La ruta va en el mensaje: un 7/8 por el hook no debe obligar a leer
+        # el código para saber dónde se buscó (sugerencia del PR #30).
+        return False, f"pre-commit hook does not exist (looked in {hooks_dir})"
     if not os.access(hook, os.X_OK):
         return False, "pre-commit hook is not executable"
     return True, None
