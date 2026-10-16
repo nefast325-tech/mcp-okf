@@ -285,6 +285,18 @@ use one vault's vocabulary) so the vault declares every pair it uses in
 `edge_types.<type>.valid_pairs`; an edge type with no declared pairs is
 unrestricted, as `corrige` always was.
 
+### `okf board` — the vault as a read-only board
+
+`okf board` writes one JSON with the vault as a board: `columnas` (the
+states of each layer from the state schema), `tarjetas` (one per typed
+concept outside the record layer, with layer, status, `iniciativa`,
+checkbox progress, age and `stale` level), `tareas` (open checkboxes with
+their age, as `search --todos --aging` computes them) and `salud` (counts
+per layer and state). `--iniciativa X` keeps only cards and tasks whose
+`iniciativa` field holds `X`; `--out` writes to a file. A GitHub Action can
+run it on every push and publish the JSON for a Worker to serve — the page
+never parses the vault.
+
 ### `okf stamp` — timestamp follows content
 
 `timestamp` is the last meaningful change. `edit` refreshes it only when the
