@@ -59,6 +59,15 @@ DEFAULTS: dict[str, Any] = {
             "strict": False,
             "schemas": {},
         },
+        # Campos propios por tipo (ver cli/fields.py). Vacío = los campos
+        # libres no se validan, como siempre.
+        "fields": {
+            "strict": False,
+            "schemas": {},
+        },
+        # Tipo que `okf tasks` lista y crea con `promote`. El vocabulario es
+        # del vault; este es el nombre acordado en la fase 0 del rediseño.
+        "task": "Task",
         "directory": {
             "Sistema": "sistema",
             "Agente": "agentes",
@@ -214,6 +223,13 @@ DEFAULTS: dict[str, Any] = {
             "## Archivos\n\n"
             "(¿SKILL.md, references/, scripts/?)\n"
         ),
+        "Task": (
+            "## Qué hay que hacer\n\n"
+            "(Una acción concreta, con quién la hace en `responsable` y, si "
+            "tiene fecha, en `vence`.)\n\n"
+            "## Hecho cuando\n\n"
+            "(¿Qué tiene que ser cierto para marcarla `hecha`?)\n"
+        ),
         "Workflow": (
             "## Qué problema resuelve\n\n"
             "(¿Qué problema resuelve este workflow? ¿Cuándo debería un agente sugerirlo?)\n\n"
@@ -357,6 +373,25 @@ class Config:
         """`types.states.strict`: True = incumplir el esquema es error."""
         states = self._data["types"].get("states") or {}
         return bool(states.get("strict", False)) if isinstance(states, dict) else False
+
+    @property
+    def fields_schemas(self) -> dict:
+        """Esquemas de campos por tipo (`types.fields.schemas`, cli/fields.py).
+        Vacío si el vault no declara ninguno: los campos libres no se validan."""
+        fields = self._data["types"].get("fields") or {}
+        schemas = fields.get("schemas") if isinstance(fields, dict) else None
+        return dict(schemas) if isinstance(schemas, dict) else {}
+
+    @property
+    def fields_strict(self) -> bool:
+        """`types.fields.strict`: True = incumplir el esquema de campos es error."""
+        fields = self._data["types"].get("fields") or {}
+        return bool(fields.get("strict", False)) if isinstance(fields, dict) else False
+
+    @property
+    def types_task(self) -> str:
+        """Tipo que `okf tasks` lista y que `promote` crea (`types.task`)."""
+        return str(self._data["types"].get("task") or "Task")
 
     @property
     def graph_strict_pairs(self) -> bool:

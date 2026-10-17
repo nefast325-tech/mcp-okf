@@ -5,6 +5,19 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
+Las tareas como notas, y un esquema de campos por tipo (fase 3 del rediseño del vault de cliente).
+
+### Added
+- **`types.fields`** (cli/fields.py): el vault declara, por tipo, campos exigidos (`required`), valores cerrados (`values`) y formato (`format: date`, ISO). `validate` lo comprueba (validación 13: aviso por defecto, error con `types.fields.strict`), `new` no crea un concepto al que le falte un campo exigido y `edit --field` no deja un valor fuera de la lista. Sin esquema para un tipo, los campos siguen sin validarse.
+- **`okf tasks list [--responsable] [--iniciativa] [--status] [--vencidas] [--json]`**: las notas del tipo `types.task` (default `Task`) ordenadas con las vencidas primero y luego por `vence`; la iniciativa es la propia o la de la nota a la que `aplica`. Una tarea en un estado `done` de su capa no vence.
+- **`okf tasks promote <nota> (--line N | --match TEXTO) --responsable X [--vence FECHA]`**: convierte una casilla abierta en una nota de tarea con `aplica` → la nota de origen, y reemplaza la casilla por un enlace a la tarea para que `search --todos` y `board` no la cuenten dos veces. Rechaza una línea que no es casilla abierta, un campo exigido ausente (con strict), una fecha mal escrita y un par `aplica` no declarado cuando `graph.strict_pairs` está activo. `--dry-run` muestra la tarea y el reemplazo sin escribir. Bloqueado en modo solo-lectura.
+- `board`: cada tarjeta trae `responsable` y `vence` (null si la nota no los lleva).
+- Plantilla embebida para `Task` («Qué hay que hacer» / «Hecho cuando»).
+
+### Tests
+- `tests/test_tasks_y_campos.py` (+16): esquema de campos (exigido, valores, fecha), validate estricto y en aviso, `new`/`edit` con esquema, `tasks list` (orden, filtros, iniciativa heredada, JSON), `promote` (crea, enlaza, reemplaza, rechazos, par no declarado, dry-run) y `board` con los campos nuevos.
+- Suite: **477** (461 en master tras el #36 y el #37).
+
 ### Fixed
 - **Con el vault en un subdirectorio del repo git, el modo staged validaba 0 archivos y salía 0**: `git diff --name-only` emite rutas relativas a la RAÍZ del repo, así que `vault / f` no existía, el bucle lo descartaba con un `continue` mudo y el hook de pre-commit no podía bloquear nada (issue #37). Ahora `cli/gitutil.staged_paths` pide las rutas con `--relative` (relativas al vault y sin los staged de fuera de él) y `validate` avisa en stderr cuando no puede listar los staged o cuando un path no existe bajo el vault, en vez de callar. Misma clase cerrada en los otros consumidores de git: `stamp --staged` (no renovaba ni restauraba el timestamp: `HEAD:<rel>` no resolvía), el guard de pérdida de contenido de `validate` (`git show HEAD:`), `git log --name-only` del índice de fechas de `health`/`stale` y `git status` de los archivos sin commitear (que ahora recorta el prefijo del vault y descarta lo de fuera). Tests: +5 en `tests/test_validate_staged_vault_en_subdirectorio.py` (461 en la suite); 4 fallan sin el cambio.
 - **`validate` en modo staged (el hook) no respetaba `exclude.dirs`**: un `.md` staged dentro de un directorio excluido (`Templates/`, `scripts/`…) se validaba como concepto aunque `validate --all` lo saltara. Medido en el vault de cliente el 16-oct-2026: una plantilla de Obsidian en `Templates/Task.md` con `{{date}}` en el frontmatter bloqueaba el commit («invalid YAML»); `--all` daba 246/246. Ahora el modo staged aplica las mismas exclusiones que `find_md_files`. Test: `tests/test_validate_staged_respeta_exclude.py` (+2).

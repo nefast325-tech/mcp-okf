@@ -243,6 +243,36 @@ def build_parser():
     sp_board.add_argument("--no-tasks", action="store_true", default=False,
                           help="Skip the checkbox tasks section")
 
+    # ── tasks ──
+    sp_tasks = subparsers.add_parser(
+        "tasks", help="Las tareas como notas: listar por responsable, iniciativa y "
+                      "vencimiento; `promote` convierte una casilla en una nota de tarea")
+    tasks_sub = sp_tasks.add_subparsers(dest="tasks_command")
+    sp_tl = tasks_sub.add_parser("list", help="Listar tareas (vencidas primero, luego por fecha)")
+    sp_tl.add_argument("--responsable", type=str, default=None, help="Solo las de esta persona")
+    sp_tl.add_argument("--iniciativa", type=str, default=None,
+                       help="Solo las de esta iniciativa (campo propio o el de la nota a la que aplica)")
+    sp_tl.add_argument("--status", type=str, default=None, help="Solo las de este estado")
+    sp_tl.add_argument("--vencidas", action="store_true", default=False,
+                       help="Solo las que tienen `vence` pasado y no están terminadas")
+    sp_tl.add_argument("--json", dest="as_json", action="store_true", default=False,
+                       help="Salida JSON")
+    sp_tp = tasks_sub.add_parser(
+        "promote", help="Convertir una casilla abierta de una nota en una nota de tarea "
+                        "(aplica → la nota; la casilla pasa a ser un enlace)")
+    sp_tp.add_argument("source", type=str, help="Nota que contiene la casilla (ruta o slug)")
+    sp_tp.add_argument("--line", type=int, default=None, help="Número de línea de la casilla")
+    sp_tp.add_argument("--match", type=str, default=None,
+                       help="Texto contenido en la casilla (la primera abierta que lo tenga)")
+    sp_tp.add_argument("--responsable", type=str, default=None, help="Quién la hace")
+    sp_tp.add_argument("--vence", type=str, default=None, help="Fecha límite ISO (YYYY-MM-DD)")
+    sp_tp.add_argument("--title", type=str, default=None,
+                       help="Título de la tarea (default: el texto de la casilla)")
+    sp_tp.add_argument("--description", type=str, default=None,
+                       help="Description de la tarea (default: el título + de dónde sale)")
+    sp_tp.add_argument("--dry-run", action="store_true", default=False,
+                       help="Mostrar la tarea y el reemplazo sin escribir")
+
     # ── stamp ──
     sp_stamp = subparsers.add_parser(
         "stamp",
@@ -458,6 +488,9 @@ def main(argv=None):
             _exit = run(args, vault, config) or 0
         elif command == "board":
             from cli.commands.board import run
+            _exit = run(args, vault, config) or 0
+        elif command == "tasks":
+            from cli.commands.tasks import run
             _exit = run(args, vault, config) or 0
         elif command == "migrate-reads":
             from cli.commands.migrate_reads import run

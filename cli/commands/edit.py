@@ -356,6 +356,18 @@ def run(args, vault, config=None):
                 return 1
             _set_dotted(fields, key, _parse_field_value(raw_value), changed)
 
+        # Esquema de campos del vault (cli/fields.py): el resultado del merge
+        # tiene que cumplirlo (campo exigido que se borra, valor fuera de la
+        # lista, fecha mal escrita).
+        from cli.fields import check_fields, fields_strict
+        field_problems = check_fields(config, concept_type, fields)
+        if field_problems and fields_strict(config):
+            for problem in field_problems:
+                print(f"❌ {problem}", file=sys.stderr)
+            return 1
+        for problem in field_problems:
+            print(f"⚠️  {problem}", file=sys.stderr)
+
     # ── typed links: replace semantics ──
     links_raw = getattr(args, "links", None)
     clear_links = getattr(args, "clear_links", False)

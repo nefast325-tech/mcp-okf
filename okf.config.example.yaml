@@ -82,9 +82,23 @@ types:
     Research: research
     Handoff: handoffs
 
+  # ── Campos propios por tipo (cli/fields.py) y tipo de tarea (okf tasks) ──
+  # Opcional. Un campo puede ser exigido (`required`), tener una lista cerrada
+  # de valores (`values`) o un formato (`format: date` = ISO YYYY-MM-DD).
+  # strict: false = incumplirlo es aviso en validate; true = error.
+  # task: el tipo que `okf tasks` lista y que `tasks promote` crea.
+  # fields:
+  #   strict: false
+  #   schemas:
+  #     Task:
+  #       responsable: {required: true, values: [rafael, jaime, claude, skynet]}
+  #       vence: {format: date}
+  # task: Task
+
 # ── Staleness Thresholds ─────────────────────────────────────
 # Control the semantic staleness detector (okf_stale).
 # A concept is marked STALE if it triggers 3+ of these 7 signals.
+
 stale:
   # Days since last timestamp without being considered old.
   timestamp_days: 90
