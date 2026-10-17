@@ -3,11 +3,12 @@
 Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a Changelog](https://keepachangelog.com/).
 
 ---
-## [Unreleased]
+## [2026-10-17] — v0.4.27
 
-Las tareas como notas, y un esquema de campos por tipo (fase 3 del rediseño del vault de cliente).
+Las dos decisiones de modelo del vault de cliente, hechas cumplir por el CLI: las casillas acotan el estado (#34) y las tareas son notas con `responsable`/`vence` (#35), más el cierre de tres asimetrías de `validate` (#36, #37). Las dos reglas son opt-in por vault: sin `done` en `types.states` y sin `types.fields` en la config, el comportamiento es el de v0.4.26.
 
 ### Added
+- **`done:` por capa en `types.states.schemas`** (validación 12): una nota en un estado «terminado» con casillas abiertas es problema (aviso por defecto, error con `strict`); una nota en el estado inicial con casillas ya marcadas es aviso siempre. `edit --status` rechaza pasar a un estado `done` con casillas abiertas (`--force` para migraciones). `cancelada` no va en `done` a propósito: cancelar deja cosas sin hacer. Sin `done` en el esquema no cambia nada (#34).
 - **`types.fields`** (cli/fields.py): el vault declara, por tipo, campos exigidos (`required`), valores cerrados (`values`) y formato (`format: date`, ISO). `validate` lo comprueba (validación 13: aviso por defecto, error con `types.fields.strict`), `new` no crea un concepto al que le falte un campo exigido y `edit --field` no deja un valor fuera de la lista. Sin esquema para un tipo, los campos siguen sin validarse.
 - **`okf tasks list [--responsable] [--iniciativa] [--status] [--vencidas] [--json]`**: las notas del tipo `types.task` (default `Task`) ordenadas con las vencidas primero y luego por `vence`; la iniciativa es la propia o la de la nota a la que `aplica`. Una tarea en un estado `done` de su capa no vence.
 - **`okf tasks promote <nota> (--line N | --match TEXTO) --responsable X [--vence FECHA]`**: convierte una casilla abierta en una nota de tarea con `aplica` → la nota de origen, y reemplaza la casilla por un enlace a la tarea para que `search --todos` y `board` no la cuenten dos veces. Rechaza una línea que no es casilla abierta, un campo exigido ausente (con strict), una fecha mal escrita y un par `aplica` no declarado cuando `graph.strict_pairs` está activo. `--dry-run` muestra la tarea y el reemplazo sin escribir. Bloqueado en modo solo-lectura.
@@ -16,7 +17,14 @@ Las tareas como notas, y un esquema de campos por tipo (fase 3 del rediseño del
 
 ### Tests
 - `tests/test_tasks_y_campos.py` (+16): esquema de campos (exigido, valores, fecha), validate estricto y en aviso, `new`/`edit` con esquema, `tasks list` (orden, filtros, iniciativa heredada, JSON), `promote` (crea, enlaza, reemplaza, rechazos, par no declarado, dry-run) y `board` con los campos nuevos.
-- Suite: **477** (461 en master tras el #36 y el #37).
+- `tests/test_states_checkboxes.py` (+7): estado `done` con casillas abiertas (error con strict, aviso sin él), estado inicial con casillas marcadas y la transición rechazada desde `edit --status`.
+- Suite: **484** (461 tras el #36 y el #37; +7 del #34, +16 del #35).
+
+### Medido (2026-10-17, vault de cliente RHFGroup con las dos reglas activas)
+- `validate --all` contra la config real del cliente: **283 válidas, 0 errores** — las 37 notas `Task` de `tasks/` ya cumplen `responsable`/`vence`.
+- Las reglas disparan, no solo en los tests: `Task` sin `responsable`, `responsable: pepito` (fuera de `values`) y `vence: '31 de octubre'` → tres errores que nombran el campo y los valores admitidos; `Plan` en `hecha` con una casilla abierta → error; `Plan` en `pendiente` con una marcada → aviso; `edit --status hecha` con casilla abierta → rechazo.
+- `tasks list`: **37 tareas** con responsable, vencimiento e iniciativa heredada del `aplica`. `tasks promote` creó la `Task`, la enlazó con `aplica` y reemplazó la casilla por `- → [[tasks/…]]`.
+- `OKF-Vault`, que no declara ninguna de las dos: **703/703 válidas y 9/9 health** antes y después del cambio.
 
 ### Fixed
 - **Con el vault en un subdirectorio del repo git, el modo staged validaba 0 archivos y salía 0**: `git diff --name-only` emite rutas relativas a la RAÍZ del repo, así que `vault / f` no existía, el bucle lo descartaba con un `continue` mudo y el hook de pre-commit no podía bloquear nada (issue #37). Ahora `cli/gitutil.staged_paths` pide las rutas con `--relative` (relativas al vault y sin los staged de fuera de él) y `validate` avisa en stderr cuando no puede listar los staged o cuando un path no existe bajo el vault, en vez de callar. Misma clase cerrada en los otros consumidores de git: `stamp --staged` (no renovaba ni restauraba el timestamp: `HEAD:<rel>` no resolvía), el guard de pérdida de contenido de `validate` (`git show HEAD:`), `git log --name-only` del índice de fechas de `health`/`stale` y `git status` de los archivos sin commitear (que ahora recorta el prefijo del vault y descarta lo de fuera). Tests: +5 en `tests/test_validate_staged_vault_en_subdirectorio.py` (461 en la suite); 4 fallan sin el cambio.
