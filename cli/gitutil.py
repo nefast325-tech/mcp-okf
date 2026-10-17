@@ -17,6 +17,7 @@ _ISO_DATE_RE = re.compile(
 # git no cambia durante la ejecución de un comando.
 _DATES_CACHE = {}
 _UNCOMMITTED_CACHE = {}
+_PREFIX_CACHE = {}
 
 
 def _parse_iso(value):
@@ -50,7 +51,12 @@ def build_git_dates_index(vault):
     index = {}
     try:
         result = subprocess.run(
-            ["git", "-C", str(vault), "log", "--format=%aI", "--name-only"],
+            # --relative: paths relativos al VAULT y solo sus commits. Sin esto,
+            # con el vault en un subdirectorio del repo, las rutas vienen con el
+            # prefijo del subdir y ninguna coincide con un relpath del vault
+            # (índice vacío → todas las fechas «desconocidas»).
+            ["git", "-C", str(vault), "log", "--format=%aI", "--name-only",
+             "--relative"],
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
@@ -117,6 +123,7 @@ def build_uncommitted_set(vault):
     except Exception:
         return set()
 
+    prefix = vault_prefix(vault)
     for line in result.stdout.splitlines():
         if len(line) < 4:
             continue
@@ -124,7 +131,14 @@ def build_uncommitted_set(vault):
         # Renombrados vienen como "old -> new": nos interesa el destino.
         if " -> " in path:
             path = path.split(" -> ")[-1].strip()
-        paths.add(path.strip('"'))
+        path = path.strip('"')
+        if prefix:
+            # `git status` habla relativo a la raíz del repo: fuera del vault no
+            # nos sirve, dentro hay que recortar el prefijo.
+            if not path.startswith(prefix):
+                continue
+            path = path[len(prefix):]
+        paths.add(path)
 
     _UNCOMMITTED_CACHE[cache_key] = paths
     return paths
@@ -134,5 +148,71 @@ def first_last_for(relpath, index):
     """Returns (first_date, last_date) datetimes for a relpath, or (None, None)."""
     entry = index.get(relpath)
     if not entry:
-        return None, None
+        return (None, None)
     return _parse_iso(entry.get("first")), _parse_iso(entry.get("last"))
+
+
+def vault_prefix(vault):
+    """Prefijo del vault dentro del repo git ('' si el vault ES la raíz).
+
+    ``git show HEAD:<path>``, ``git status`` y ``git log --name-only`` hablan en
+    paths relativos a la RAÍZ del repo. Con el vault en un subdirectorio
+    (``monorepo/vault/``) un relpath del vault no resuelve: ``HEAD:planes/p.md``
+    no existe y las comparaciones contra HEAD se vuelven «archivo nuevo».
+    """
+    key = str(vault)
+    if key in _PREFIX_CACHE:
+        return _PREFIX_CACHE[key]
+    prefix = ""
+    try:
+        result = subprocess.run(
+            ["git", "-C", key, "rev-parse", "--show-prefix"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            prefix = result.stdout.strip()
+    except Exception:
+        prefix = ""
+    _PREFIX_CACHE[key] = prefix
+    return prefix
+
+
+def head_blob(vault, rel):
+    """Contenido de ``rel`` (relpath del vault) en HEAD, o None si no está."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(vault), "show", f"HEAD:{vault_prefix(vault)}{rel}"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def staged_paths(vault, pattern="*.md", diff_filter="ACMR"):
+    """Archivos staged, con rutas relativas al VAULT (no a la raíz del repo).
+    ``git diff --name-only`` emite rutas relativas a la raíz del repo git. Si el
+    vault vive en un subdirectorio (``monorepo/vault/``), el llamador hacía
+    ``vault / f`` → no existe → descarte silencioso: ``validate`` (modo staged,
+    el que corre el hook) reportaba «0 file(s) valid» y salía 0, dejando pasar
+    cualquier commit. ``--relative`` hace que git emita las rutas relativas al
+    cwd, y con ``git -C vault`` el cwd es el vault; de paso excluye los staged
+    que quedan fuera del vault.
+
+    Returns:
+        (paths, error): ``paths`` son str relativos al vault; ``error`` es el
+        stderr de git cuando el comando falla (p. ej. el vault no es un repo),
+        o None si todo fue bien.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(vault), "diff", "--cached", "--name-only",
+             "--relative", f"--diff-filter={diff_filter}", pattern],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return [], str(e)
+    if result.returncode != 0:
+        err = (result.stderr or "").strip().splitlines()
+        return [], err[0] if err else f"git exit {result.returncode}"
+    return [f.strip() for f in result.stdout.split("\n") if f.strip()], None

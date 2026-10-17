@@ -28,6 +28,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from cli.frontmatter import parse_frontmatter
+from cli.gitutil import staged_paths, head_blob
 
 _CONTENT_KEYS = ("title", "description")
 _TS_LINE = re.compile(r"^timestamp:[ \t]*(.*)$", re.MULTILINE)
@@ -61,13 +62,7 @@ def _content_signature(fm, body):
 
 def _head_text(vault, rel):
     """Versión en HEAD del archivo, o None si no existe en HEAD."""
-    result = subprocess.run(
-        ["git", "-C", str(vault), "show", f"HEAD:{rel}"],
-        capture_output=True, text=True, timeout=10,
-    )
-    if result.returncode != 0:
-        return None
-    return result.stdout
+    return head_blob(vault, rel)
 
 
 def _raw_timestamp(text):
@@ -118,12 +113,11 @@ def decide(work_text, head_text, now=None):
 
 
 def _staged_md(vault):
-    result = subprocess.run(
-        ["git", "-C", str(vault), "diff", "--cached", "--name-only",
-         "--diff-filter=M", "*.md"],
-        capture_output=True, text=True, timeout=10,
-    )
-    return [f.strip() for f in result.stdout.split("\n") if f.strip()]
+    """Staged .md, con rutas relativas al VAULT (no a la raíz del repo git)."""
+    paths, err = staged_paths(vault, diff_filter="M")
+    if err:
+        print(f"⚠️  stamp: no pude listar los archivos staged ({err}).", file=sys.stderr)
+    return paths
 
 
 def run(args, vault, config=None):

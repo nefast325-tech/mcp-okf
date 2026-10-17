@@ -28,6 +28,7 @@ import re
 import sys
 from pathlib import Path
 from cli.vault import find_md_files, EXCLUDE_FILES, _get_excludes
+from cli.gitutil import staged_paths, head_blob
 
 # Guard de pérdida de contenido (validación 11): un body que conserva menos de
 # esta fracción de sus líneas con contenido respecto a HEAD se rechaza.
@@ -121,20 +122,12 @@ def _head_body(filepath, vault, rel=None):
     body que pierde la mayor parte de sus líneas casi siempre es contenido
     borrado, no una edición.
     """
-    import subprocess
     if rel is None:
         try:
             rel = str(Path(filepath).resolve().relative_to(Path(vault).resolve()))
         except ValueError:
             return None
-    try:
-        r = subprocess.run(["git", "-C", str(vault), "show", f"HEAD:{rel}"],
-                           capture_output=True, text=True, timeout=10)
-    except Exception:
-        return None
-    if r.returncode != 0:
-        return None
-    return r.stdout
+    return head_blob(vault, rel)
 
 
 def _body_line_count(text):
@@ -770,13 +763,13 @@ def run(args, vault, config=None):
         files = find_md_files(vault, config=config)
     else:
         # Default: .md files staged in git
-        import subprocess
-        result = subprocess.run(
-            ["git", "-C", str(vault), "diff", "--cached", "--name-only",
-             "--diff-filter=ACMR", "*.md"],
-            capture_output=True, text=True, timeout=10,
-        )
-        staged = [f.strip() for f in result.stdout.split("\n") if f.strip()]
+        staged, git_err = staged_paths(vault)
+        if git_err:
+            # Antes esto salía como «No .md files staged» con exit 0: un sensor
+            # ciego se veía igual que un vault limpio.
+            print(f"⚠️  validate: no pude listar los archivos staged ({git_err}); "
+                  f"no se validó nada.", file=sys.stderr)
+            return 0
         # Mismas exclusiones que `--all` (find_md_files), de la misma fuente:
         # un .md staged dentro de un directorio excluido (Templates/, scripts/…)
         # o con un nombre excluido (index.md, log.md, AGENTS.md…) no es un
@@ -786,6 +779,13 @@ def run(args, vault, config=None):
         files = [vault / f for f in staged
                  if Path(f).name not in exclude_files
                  and not (set(Path(f).parts[:-1]) & exclude_dirs)]
+        missing = [str(f) for f in files if not f.exists()]
+        if missing:
+            # Un staged que no aparece bajo el vault es un sensor roto, no un
+            # archivo irrelevante: decirlo, no descartarlo en silencio.
+            print(f"⚠️  validate: {len(missing)} archivo(s) staged no existen bajo "
+                  f"el vault y no se validan: {', '.join(missing)}", file=sys.stderr)
+        files = [f for f in files if f.exists()]
         if not files:
             print("✓ No .md files staged for validation.")
             return 0
