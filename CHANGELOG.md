@@ -3,6 +3,12 @@
 Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a Changelog](https://keepachangelog.com/).
 
 ---
+## [Unreleased]
+
+### Fixed
+- **`validate` en modo staged (el hook) no respetaba `exclude.dirs`**: un `.md` staged dentro de un directorio excluido (`Templates/`, `scripts/`…) se validaba como concepto aunque `validate --all` lo saltara. Medido en el vault de cliente el 16-oct-2026: una plantilla de Obsidian en `Templates/Task.md` con `{{date}}` en el frontmatter bloqueaba el commit («invalid YAML»); `--all` daba 246/246. Ahora el modo staged aplica las mismas exclusiones que `find_md_files`. Test: `tests/test_validate_staged_respeta_exclude.py` (+2).
+
+---
 ## [2026-10-16] — v0.4.26
 
 `okf board` (PR #32) y el detector de obsolescencia con una sola vara.

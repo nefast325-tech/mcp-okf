@@ -777,8 +777,14 @@ def run(args, vault, config=None):
             capture_output=True, text=True, timeout=10,
         )
         staged = [f.strip() for f in result.stdout.split("\n") if f.strip()]
+        # Mismas exclusiones que `--all` (find_md_files): un .md staged dentro
+        # de un directorio excluido (Templates/, scripts/…) no es un concepto.
+        # Sin esto, una plantilla de Obsidian con `{{date}}` en el frontmatter
+        # bloqueaba el commit aunque `validate --all` la saltara.
+        exclude_dirs = set(config.exclude_dirs) if config else set()
         files = [vault / f for f in staged
-                 if not f.endswith(("index.md", "log.md", "dashboard.md"))]
+                 if not f.endswith(("index.md", "log.md", "dashboard.md"))
+                 and not (set(Path(f).parts[:-1]) & exclude_dirs)]
         if not files:
             print("✓ No .md files staged for validation.")
             return 0
