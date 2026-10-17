@@ -14,6 +14,9 @@ Validates that:
    appending)
 9. `status` matches the vault's state schema (`types.states` in config, see
    cli/states.py): warning by default, error with `types.states.strict`
+10. Declared fields match the vault's field schema (`types.fields`, see
+   cli/fields.py): required fields present, closed values, ISO dates —
+   warning by default, error with `types.fields.strict`
 
 Unlike parse_frontmatter, it has NO regex fallback.
 If the YAML is broken, it fails.
@@ -524,6 +527,20 @@ def _check_states(fm, config):
     return [], problems
 
 
+def _check_fields(fm, config):
+    """Validation 13: declared fields against the vault's field schema
+    (cli/fields.py). Same severity rule as the state schema: errors with
+    `types.fields.strict`, warnings otherwise; nothing without a schema."""
+    from cli.fields import check_fields, fields_strict
+
+    problems = check_fields(config, str(fm.get("type", "")), fm)
+    if not problems:
+        return [], []
+    if fields_strict(config):
+        return problems, []
+    return [], problems
+
+
 def _validate_file(filepath, vault, definitions=None, name_index=None, config=None):
     """Validates the frontmatter and wikilinks of a .md file.
 
@@ -642,6 +659,11 @@ def _validate_file(filepath, vault, definitions=None, name_index=None, config=No
     # ── Validation 12: status against the state schema (cli/states.py) ──
     state_errors, state_warnings = _check_states(fm, config)
     all_errors.extend(state_errors)
+
+    # ── Validation 13: declared fields against the field schema (cli/fields.py) ──
+    field_errors, field_warnings = _check_fields(fm, config)
+    all_errors.extend(field_errors)
+    state_warnings = state_warnings + field_warnings
 
     # ── Validation 7: typed edge consistency ──
     edge_errors, edge_warnings = _check_edge_type_consistency(

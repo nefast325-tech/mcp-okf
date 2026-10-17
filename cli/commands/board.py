@@ -111,6 +111,10 @@ def build_board(vault, config=None, iniciativa=None, with_tasks=True):
             "edad_dias": days_ago(ts_str, today) if ts_str else None,
             "tags": normalize_tags(fm.get("tags")),
             "iniciativa": inis or None,
+            # Campos de la capa de trabajo cuando la nota los lleva (una
+            # `Task`, fase 3): quién la hace y para cuándo.
+            "responsable": (str(fm["responsable"]) if fm.get("responsable") else None),
+            "vence": (str(fm["vence"]) if fm.get("vence") else None),
             "casillas": {"hechas": done, "total": total},
             "stale": ({"level": stale_r["level"], "signals": stale_r["signals"]}
                       if stale_r else None),

@@ -341,6 +341,21 @@ def _parse_extra_fields(field_specs):
     return lines
 
 
+def _extra_field_values(field_specs):
+    """{key: value} de los --field ya validados por _parse_extra_fields, para
+    contrastarlos con el esquema de campos del tipo (cli/fields.py)."""
+    if not field_specs:
+        return {}
+    from cli.commands.edit import _parse_field_value
+    values = {}
+    for spec in field_specs:
+        if "=" not in spec:
+            continue
+        raw_key, raw_value = spec.split("=", 1)
+        values[raw_key.strip()] = _parse_field_value(raw_value)
+    return values
+
+
 def _parse_links(links):
     """Parse --link 'target:type' flags into a list of dicts.
 
@@ -511,6 +526,18 @@ def run(args, vault, config=None):
     extra_lines = _parse_extra_fields(getattr(args, "fields", None))
     if extra_lines is None:
         return 1
+
+    # Esquema de campos del vault (cli/fields.py): un tipo que exige campos
+    # (`Task` exige `responsable`) no se crea sin ellos en modo estricto.
+    from cli.fields import check_fields, fields_strict
+    extra_values = _extra_field_values(getattr(args, "fields", None))
+    field_problems = check_fields(config, concept_type, extra_values)
+    if field_problems and fields_strict(config):
+        for problem in field_problems:
+            print(f"❌ {problem} (pasalo con --field campo=valor)", file=sys.stderr)
+        return 1
+    for problem in field_problems:
+        print(f"⚠️  {problem}", file=sys.stderr)
 
     # Nombre del archivo: --filename lo fija exacto (sin slugificar, para no
     # romper convenciones con guiones bajos); si no, se deriva del slug del

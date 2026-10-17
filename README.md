@@ -297,6 +297,41 @@ per layer and state). `--iniciativa X` keeps only cards and tasks whose
 run it on every push and publish the JSON for a Worker to serve — the page
 never parses the vault.
 
+### Field schema per type and `okf tasks`
+
+A checkbox is a checklist item: it lives inside its note and has no owner or
+due date. Work that has an owner or a date is a task, and a task is a note of
+the type the vault declares in `types.task` (default `Task`), with a status
+from the work layer and `responsable` / `vence` as fields. The vault declares
+what those fields accept in `types.fields` (warning by default, error with
+`strict: true`); `validate`, `new` and `edit` enforce it:
+
+```yaml
+types:
+  task: Task
+  fields:
+    strict: true
+    schemas:
+      Task:
+        responsable: {required: true, values: [rafael, jaime, claude, skynet]}
+        vence: {format: date}          # ISO YYYY-MM-DD
+```
+
+Relations stay as edges: `aplica` → the Plan or Project the task belongs to,
+`depende` → what blocks it (declare the pairs in `edge_types`).
+
+```bash
+okf tasks list [--responsable X] [--iniciativa X] [--status X] [--vencidas] [--json]
+okf tasks promote plans/mi-plan --match "Firmar" --responsable rafael --vence 2026-11-01
+```
+
+`list` shows overdue tasks first; the initiative is the task's own
+`iniciativa` or, failing that, the one of the note it applies to. `promote`
+turns an open checkbox into a task note (`aplica` → the source note) and
+replaces the checkbox with a link to the task, so `search --todos` and `board`
+stop counting it twice. Creating, moving and assigning need no extra command:
+`new --type Task --field responsable=…`, `edit --status …`, `edit --field …`.
+
 ### `okf stamp` — timestamp follows content
 
 `timestamp` is the last meaningful change. `edit` refreshes it only when the
