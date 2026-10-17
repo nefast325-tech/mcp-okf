@@ -96,6 +96,29 @@ class TestBoard(BoardBase):
         i1 = next(c for c in b["tarjetas"] if c["file"] == "insights/i1")
         self.assertIsNone(i1["iniciativa"])
 
+    def test_tarjeta_trae_relaciones_y_entrantes(self):
+        # Una nota con aristas tipadas: destino sin .md, con .md, y uno que no existe.
+        p3 = self.vault / "plans" / "p3.md"
+        p3.write_text(
+            "---\ntype: Plan\ntitle: \"P3\"\ndescription: \"D.\"\nstatus: pendiente\n"
+            f"timestamp: {TS}\ncreated: {TS}\nlinks:\n"
+            "  - target: plans/p1\n    type: aplica\n"
+            "  - target: insights/i1.md\n    type: depende\n"
+            "  - target: plans/no-existe\n    type: extiende\n---\n\nCuerpo.\n",
+            encoding="utf-8")
+        b = build_board(self.vault, self.config)
+        por = {c["file"]: c for c in b["tarjetas"]}
+        self.assertEqual(por["plans/p3"]["relaciones"], [
+            {"type": "aplica", "target": "plans/p1", "title": "T"},
+            {"type": "depende", "target": "insights/i1", "title": "T"},
+            {"type": "extiende", "target": "plans/no-existe", "title": None},
+        ])
+        self.assertEqual(por["plans/p3"]["entrantes"], 0)
+        self.assertEqual(por["plans/p1"]["entrantes"], 1)
+        self.assertEqual(por["insights/i1"]["entrantes"], 1)
+        self.assertEqual(por["plans/p2"]["entrantes"], 0)
+        self.assertEqual(por["plans/p2"]["relaciones"], [])
+
     def test_tareas_son_casillas_abiertas_con_antiguedad(self):
         b = build_board(self.vault, self.config)
         self.assertEqual(sorted(t["text"] for t in b["tareas"]), ["pendiente dos", "pendiente uno"])

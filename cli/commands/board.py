@@ -51,6 +51,22 @@ def _iniciativas(fm):
     return [str(value).strip()] if str(value).strip() else []
 
 
+def _typed_links(fm):
+    """[(type, target rel con .md)] de `links:` del frontmatter. El target se
+    normaliza como lo escribe el vault: relativo a la raíz, con o sin `.md`."""
+    out = []
+    for link in fm.get("links") or []:
+        if not isinstance(link, dict):
+            continue
+        target = str(link.get("target") or "").strip().lstrip("./")
+        if not target:
+            continue
+        if not target.endswith(".md"):
+            target += ".md"
+        out.append((str(link.get("type") or "").strip() or "?", target))
+    return out
+
+
 def _layer_columns(config, types_seen_status):
     """{capa: [estados]} desde el esquema; sin esquema, una capa 'sin-esquema'
     con los status observados."""
@@ -76,6 +92,9 @@ def build_board(vault, config=None, iniciativa=None, with_tasks=True):
 
     cards = []
     statuses_seen = set()
+    titles = {}          # rel (.md) → title, de TODA nota con frontmatter
+    incoming = {}        # rel (.md) → cuántas aristas tipadas apuntan a ella
+    outgoing = {}        # rel (.md) de una tarjeta → [(type, target rel)]
     for f in find_md_files(vault):
         rel = str(f.relative_to(vault))
         try:
@@ -85,10 +104,15 @@ def build_board(vault, config=None, iniciativa=None, with_tasks=True):
         fm, _ = parse_frontmatter(text)
         if not fm or not fm.get("type"):
             continue
+        titles[rel] = str(fm.get("title") or rel)
+        links = _typed_links(fm)
+        for _, target in links:
+            incoming[target] = incoming.get(target, 0) + 1
         ctype = str(fm["type"])
         schema = schema_for(config, ctype)
         if schema is not None and not schema["states"]:
             continue  # capa de registro: no va al tablero
+        outgoing[rel] = links
         layer = schema["layer"] if schema else "sin-esquema"
         status = str(fm.get("status") or "")
         statuses_seen.add(status)
@@ -119,6 +143,17 @@ def build_board(vault, config=None, iniciativa=None, with_tasks=True):
             "stale": ({"level": stale_r["level"], "signals": stale_r["signals"]}
                       if stale_r else None),
         })
+
+    # Relaciones: las aristas tipadas salientes de cada tarjeta, con el título
+    # del destino (None si no existe), y cuántas aristas entran. Es lo que deja
+    # leer en el tablero «de qué plan es parte» o «qué espera» sin abrir la nota.
+    for c in cards:
+        rel = c["file"] + ".md"
+        c["relaciones"] = [
+            {"type": t, "target": tgt[:-3] if tgt.endswith(".md") else tgt,
+             "title": titles.get(tgt)}
+            for t, tgt in outgoing.get(rel, [])]
+        c["entrantes"] = incoming.get(rel, 0)
 
     tasks = []
     if with_tasks:
