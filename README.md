@@ -268,10 +268,21 @@ types:
         replaced: superada        # a `corrige` edge must point to this state,
                                   # and a note in it needs an incoming `corrige`
         pending: [en-revision]    # what `stale` signal 3 counts as unresolved
+      trabajo:
+        types: [Plan, Project]
+        initial: pendiente
+        states: [pendiente, en-curso, hecha, cancelada]
+        done: [hecha]             # a note here must have no open checkboxes
       registro:
         types: [Session]
         states: []
 ```
+
+`done` names the states that mean "finished": a note in one of them with
+open `- [ ]` checkboxes is a problem (warning, error with `strict`), and
+`edit --status` refuses the move unless `--force`. A note still in the
+initial state with checked boxes gets a warning. `cancelada` is deliberately
+not in `done`: cancelling leaves things undone.
 
 Without a schema nothing changes: the status is not checked and `corrige`
 keeps its legacy substring heuristic (`deprecada` / `supercedida`).

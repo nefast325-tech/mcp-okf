@@ -310,8 +310,13 @@ def run(args, vault, config=None):
             if field == "status" and value and not getattr(args, "force", False):
                 # Máquina de estados del vault (cli/states.py): estado
                 # válido para el tipo y transición permitida desde el actual.
-                from cli.states import check_transition
+                from cli.states import check_transition, check_checkboxes
                 problem = check_transition(config, concept_type, old, value)
+                if not problem:
+                    # Terminar una nota con casillas abiertas contradice su lista.
+                    from cli.commands.stale import count_checkboxes
+                    checked, open_, _ = count_checkboxes(text)
+                    problem = (check_checkboxes(config, concept_type, value, checked, open_)[0] or [None])[0]
                 if problem:
                     print(f"❌ {problem} (usá --force para una migración)", file=sys.stderr)
                     return 1
