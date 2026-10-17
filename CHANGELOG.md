@@ -3,6 +3,12 @@
 Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a Changelog](https://keepachangelog.com/).
 
 ---
+## [Unreleased]
+
+### Added
+- **`board`: cada tarjeta trae `relaciones` y `entrantes`.** `relaciones` son las aristas tipadas salientes de la nota (`{type, target, title}`, con el título del destino resuelto desde el vault y `null` si no existe; el target se acepta con o sin `.md`) y `entrantes` cuenta las aristas tipadas que apuntan a ella desde cualquier nota con frontmatter, incluida la capa de registro. Es lo que deja leer en un tablero «de qué plan es parte esta tarea» o «qué espera esta nota bloqueada» sin abrirla. Pedido del vault de cliente, 17-oct-2026. Test: +1 en `tests/test_board.py`.
+
+---
 ## [2026-10-17] — v0.4.27
 
 Las dos decisiones de modelo del vault de cliente, hechas cumplir por el CLI: las casillas acotan el estado (#34) y las tareas son notas con `responsable`/`vence` (#35), más el cierre de tres asimetrías de `validate` (#36, #37). Las dos reglas son opt-in por vault: sin `done` en `types.states` y sin `types.fields` en la config, el comportamiento es el de v0.4.26.

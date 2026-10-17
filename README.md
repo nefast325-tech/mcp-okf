@@ -301,7 +301,9 @@ unrestricted, as `corrige` always was.
 `okf board` writes one JSON with the vault as a board: `columnas` (the
 states of each layer from the state schema), `tarjetas` (one per typed
 concept outside the record layer, with layer, status, `iniciativa`,
-checkbox progress, age and `stale` level), `tareas` (open checkboxes with
+checkbox progress, age, `stale` level, `responsable`/`vence` when the note
+carries them, its typed outgoing edges as `relaciones` with the target's title,
+and `entrantes`, how many typed edges point at it), `tareas` (open checkboxes with
 their age, as `search --todos --aging` computes them) and `salud` (counts
 per layer and state). `--iniciativa X` keeps only cards and tasks whose
 `iniciativa` field holds `X`; `--out` writes to a file. A GitHub Action can
