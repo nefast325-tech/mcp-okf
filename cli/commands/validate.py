@@ -27,7 +27,7 @@ Usage:
 import re
 import sys
 from pathlib import Path
-from cli.vault import find_md_files, EXCLUDE_FILES
+from cli.vault import find_md_files, EXCLUDE_FILES, _get_excludes
 
 # Guard de pérdida de contenido (validación 11): un body que conserva menos de
 # esta fracción de sus líneas con contenido respecto a HEAD se rechaza.
@@ -767,7 +767,7 @@ def run(args, vault, config=None):
             return 1
         files = [filepath]
     elif validate_all:
-        files = find_md_files(vault)
+        files = find_md_files(vault, config=config)
     else:
         # Default: .md files staged in git
         import subprocess
@@ -777,13 +777,14 @@ def run(args, vault, config=None):
             capture_output=True, text=True, timeout=10,
         )
         staged = [f.strip() for f in result.stdout.split("\n") if f.strip()]
-        # Mismas exclusiones que `--all` (find_md_files): un .md staged dentro
-        # de un directorio excluido (Templates/, scripts/…) no es un concepto.
-        # Sin esto, una plantilla de Obsidian con `{{date}}` en el frontmatter
-        # bloqueaba el commit aunque `validate --all` la saltara.
-        exclude_dirs = set(config.exclude_dirs) if config else set()
+        # Mismas exclusiones que `--all` (find_md_files), de la misma fuente:
+        # un .md staged dentro de un directorio excluido (Templates/, scripts/…)
+        # o con un nombre excluido (index.md, log.md, AGENTS.md…) no es un
+        # concepto. Sin esto, una plantilla de Obsidian con `{{date}}` en el
+        # frontmatter bloqueaba el commit aunque `validate --all` la saltara.
+        exclude_files, exclude_dirs = _get_excludes(config)
         files = [vault / f for f in staged
-                 if not f.endswith(("index.md", "log.md", "dashboard.md"))
+                 if Path(f).name not in exclude_files
                  and not (set(Path(f).parts[:-1]) & exclude_dirs)]
         if not files:
             print("✓ No .md files staged for validation.")
@@ -793,7 +794,7 @@ def run(args, vault, config=None):
     definitions = config.edge_type_definitions() if config else None
     # Shared index: built ONCE (previously _check_broken_wikilinks rebuilt
     # it per file with links: → O(n²) over the vault).
-    name_index = {f.name: str(f.relative_to(vault)) for f in find_md_files(vault)}
+    name_index = {f.name: str(f.relative_to(vault)) for f in find_md_files(vault, config=config)}
     ok_count = 0
     errors = []
 

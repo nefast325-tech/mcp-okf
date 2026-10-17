@@ -7,6 +7,7 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 
 ### Fixed
 - **`validate` en modo staged (el hook) no respetaba `exclude.dirs`**: un `.md` staged dentro de un directorio excluido (`Templates/`, `scripts/`…) se validaba como concepto aunque `validate --all` lo saltara. Medido en el vault de cliente el 16-oct-2026: una plantilla de Obsidian en `Templates/Task.md` con `{{date}}` en el frontmatter bloqueaba el commit («invalid YAML»); `--all` daba 246/246. Ahora el modo staged aplica las mismas exclusiones que `find_md_files`. Test: `tests/test_validate_staged_respeta_exclude.py` (+2).
+- **El modo staged filtraba solo tres nombres embebidos, y `--all` leía los excludes de un global mutable**: `exclude.files` del config se respetaba por accidente (dentro de `_validate_file`, que además contaba el archivo saltado como válido) y `--all`/el índice de wikilinks dependían de que `cli/main.py` hubiera pisado `EXCLUDE_FILES`/`EXCLUDE_DIRS` con `apply_config` — en uso de librería el criterio de «qué es un concepto» volvía a los defaults del módulo. Ahora las dos ramas reciben el `Config` y usan `_get_excludes`; sin `Config` el comportamiento es el anterior. Tests: +3 en `tests/test_validate_staged_respeta_exclude.py` (456 en la suite).
 
 ---
 ## [2026-10-16] — v0.4.26
