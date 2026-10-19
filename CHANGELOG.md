@@ -5,8 +5,20 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
+---
+## [2026-10-19] — v0.4.28
+
+El tablero dice de qué plan es parte una tarea y qué espera una nota bloqueada: cada tarjeta del `board` exporta sus aristas tipadas y cuántas le entran. Es el #38, que había quedado sin etiqueta.
+
 ### Added
 - **`board`: cada tarjeta trae `relaciones` y `entrantes`.** `relaciones` son las aristas tipadas salientes de la nota (`{type, target, title}`, con el título del destino resuelto desde el vault y `null` si no existe; el target se acepta con o sin `.md`) y `entrantes` cuenta las aristas tipadas que apuntan a ella desde cualquier nota con frontmatter, incluida la capa de registro. Es lo que deja leer en un tablero «de qué plan es parte esta tarea» o «qué espera esta nota bloqueada» sin abrirla. Pedido del vault de cliente, 17-oct-2026. Test: +1 en `tests/test_board.py`.
+
+### Tests
+- `tests/test_board.py::test_tarjeta_trae_relaciones_y_entrantes` (+1): tres aristas (destino sin `.md`, con `.md`, inexistente), entrantes en los destinos y listas vacías donde no hay aristas. Sin el cambio falla con `KeyError: 'relaciones'`.
+- Suite: **485** (484 en v0.4.27).
+
+### Medido (2026-10-17, master del vault de cliente)
+- **268 tarjetas, 218 con al menos una relación, 360 aristas, 0 destinos sin título**; las 37 `Task` traen su `aplica`. El JSON que genera la Action no trae estos campos hasta que su `OKF_VERSION` apunte a esta etiqueta.
 
 ---
 ## [2026-10-17] — v0.4.27
