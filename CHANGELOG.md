@@ -5,6 +5,16 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
+### Fase 5 — la iniciativa como campo y el alcance por campo
+
+- **`types.fields.common`** (cli/fields.py): un esquema de campos que vale para todos los tipos salvo los de `except`; el esquema del tipo lo pisa campo a campo. Es como el vault exige `iniciativa` en toda nota menos en la capa de registro y en las tareas (que la heredan de la nota a la que aplican) sin repetir la regla diez veces.
+- **Campos con lista** (cli/fields.py): un campo puede llevar lista (`iniciativa: [inmobiliaria, caribe-tropical]`) y cada ítem se valida contra `values`, `resolves` y `format`; una lista vacía en un campo exigido es problema.
+- **`--scope campo=valor`** (cli/access.py): la frontera de una instancia puede ser un campo del frontmatter, no solo un prefijo de ruta. `find_md_files`, la resolución de wikilinks, `read` y `traverse` ven solo las notas cuyo campo (texto o lista) contiene el valor; una nota sin el campo y los índices quedan fuera (fail-closed); un scope mal formado (`campo=a/b`, `=x`) aborta. El set de rutas visibles se construye una vez por proceso leyendo el frontmatter, sin pasar por `find_md_files`. El scope por ruta no cambia. `set_scope(prefix, vault=)` recibe el vault desde `cli/main.py`; `server.py` propaga `--scope` sin cambios.
+- Tests: `tests/test_fase5_iniciativa_scope_por_campo.py` (+13): esquema común y exentos, pisado campo a campo, listas (válida, con un ítem malo, vacía), `validate`; normalización del scope por campo y rechazo de formas inválidas; por subproceso, `search`/`read`/`traverse` acotados a una iniciativa (incluida una nota con lista), nota sin campo e índice invisibles, sin scope se ve todo, scope por ruta intacto. Sin el código, 12 de los 13 fallan. Suite: **523**.
+- Medido (2026-10-19, master del vault de cliente, sin el campo todavía): `--scope iniciativa=caribe-tropical search` devuelve **0 notas** (fail-closed, como debe); la inferencia desde tags y carpetas cubre **160 notas**, **53** quedan exentas (Session, Persona, Task) y **78** necesitan una regla más o asignación a mano — ese es el tamaño de la migración, que va en su propio PR del vault.
+
+### Fase 4 — la verdad tiene fecha, quien decide es una nota y una nota reemplazada señala su vigente
+
 Fase 4 del rediseño del vault de cliente: la verdad tiene fecha, quien decide es una nota y una nota reemplazada señala su versión vigente. Las tres piezas son opt-in por vault: sin `resolves` en `types.fields`, sin `types.review` y sin esquema de estados, el comportamiento es el de v0.4.28.
 
 ### Added

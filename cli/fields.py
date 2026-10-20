@@ -17,6 +17,18 @@ lista por responsable y por vencimiento— así que el vault puede declararlos:
             decidida_por: {required: true, resolves: Persona}
             decidida_el: {required: true, format: date}
 
+Un esquema común vale para todos los tipos salvo los exentos (fase 5):
+
+    types:
+      fields:
+        common:
+          fields:
+            iniciativa: {required: true, values: [inmobiliaria, caribe-tropical, sistema]}
+          except: [Session, Persona, Task]
+
+Un campo puede llevar lista (`iniciativa: [inmobiliaria, caribe-tropical]`):
+cada ítem se valida por separado.
+
 Cada campo admite `required` (bool), `values` (lista cerrada), `format`
 (`date` = ISO YYYY-MM-DD; sin format, texto libre) y `resolves` (fase 4: el
 valor tiene que nombrar una nota existente de ese tipo —por el nombre del
@@ -34,14 +46,22 @@ _RESOLVE_CACHE: dict = {}
 
 
 def fields_schema_for(config, concept_type):
-    """Esquema de campos del tipo ({campo: reglas}), o None si no declara uno."""
+    """Esquema de campos del tipo ({campo: reglas}), o None si no declara uno.
+
+    Es la unión del esquema común (`types.fields.common.fields`, salvo que el
+    tipo esté en `common.except`) y el propio del tipo, que gana campo a campo.
+    """
     if config is None or not concept_type:
         return None
+    merged = {}
+    common = getattr(config, "fields_common", None) or {}
+    if common and concept_type not in (getattr(config, "fields_common_except", None) or set()):
+        merged.update({str(k): (v if isinstance(v, dict) else {}) for k, v in common.items()})
     schemas = getattr(config, "fields_schemas", None) or {}
     schema = schemas.get(concept_type)
-    if not isinstance(schema, dict):
-        return None
-    return {str(k): (v if isinstance(v, dict) else {}) for k, v in schema.items()}
+    if isinstance(schema, dict):
+        merged.update({str(k): (v if isinstance(v, dict) else {}) for k, v in schema.items()})
+    return merged or None
 
 
 def fields_strict(config):
@@ -130,17 +150,25 @@ def check_fields(config, concept_type, fm, vault=None):
             continue
         values = [str(v) for v in (rules.get("values") or [])]
         resolves = rules.get("resolves")
-        text = str(value).strip()
-        if resolves:
-            known = resolvable_names(vault, resolves, config=config)
-            if text.lower() not in known and text not in values:
-                hint = (f"ninguna nota {resolves} se llama así"
-                        + (f"; valores admitidos además: {', '.join(values)}" if values else ""))
-                problems.append(f"'{name}' = '{value}' no resuelve a una {resolves} ({hint})")
-        elif values and text not in values:
-            problems.append(
-                f"'{name}' = '{value}' no está en los valores de '{concept_type}' "
-                f"({', '.join(values)})")
-        if rules.get("format") == "date" and not _is_date(value):
-            problems.append(f"'{name}' = '{value}' no es una fecha ISO (YYYY-MM-DD)")
+        # Un campo puede llevar lista (una nota del canal de atención es de dos
+        # iniciativas): cada ítem se valida por separado.
+        items = value if isinstance(value, list) else [value]
+        if isinstance(value, list) and not items:
+            if rules.get("required"):
+                problems.append(f"'{concept_type}' exige el campo '{name}' (lista vacía)")
+            continue
+        for item in items:
+            text = str(item).strip()
+            if resolves:
+                known = resolvable_names(vault, resolves, config=config)
+                if text.lower() not in known and text not in values:
+                    hint = (f"ninguna nota {resolves} se llama así"
+                            + (f"; valores admitidos además: {', '.join(values)}" if values else ""))
+                    problems.append(f"'{name}' = '{item}' no resuelve a una {resolves} ({hint})")
+            elif values and text not in values:
+                problems.append(
+                    f"'{name}' = '{item}' no está en los valores de '{concept_type}' "
+                    f"({', '.join(values)})")
+            if rules.get("format") == "date" and not _is_date(item):
+                problems.append(f"'{name}' = '{item}' no es una fecha ISO (YYYY-MM-DD)")
     return problems

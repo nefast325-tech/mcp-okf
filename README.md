@@ -402,6 +402,30 @@ okf traverse insights/old-insight --edge-type extiende --all-versions
 okf search --type Insight --all-versions
 ```
 
+### The initiative as a field, and scope by field
+
+A note says which initiative it belongs to in `iniciativa` (one value or a
+list, validated against the vault's closed list). The schema is declared once
+for every type under `types.fields.common`, with the types that are exempt
+(a session or a person belongs to no initiative; a task inherits the one of
+the note it applies to):
+
+```yaml
+types:
+  fields:
+    common:
+      fields:
+        iniciativa: {required: true, values: [inmobiliaria, caribe-tropical, sistema]}
+      except: [Session, Persona, Task]
+```
+
+With the field in place, an MCP instance can be bounded to one initiative
+without moving files: `--scope iniciativa=caribe-tropical` (or
+`OKF_SCOPE=iniciativa=caribe-tropical`) lets `search`, `read`, `traverse` and
+the graph see only the notes whose field contains that value. A note without
+the field is invisible, and so are the indexes (fail-closed). The path scope
+(`--scope publico`) keeps working as before.
+
 ### `okf stamp` — timestamp follows content
 
 `timestamp` is the last meaningful change. `edit` refreshes it only when the

@@ -60,10 +60,12 @@ DEFAULTS: dict[str, Any] = {
             "schemas": {},
         },
         # Campos propios por tipo (ver cli/fields.py). Vacío = los campos
-        # libres no se validan, como siempre.
+        # libres no se validan, como siempre. `common` es un esquema que vale
+        # para TODOS los tipos salvo los de `except` (fase 5: `iniciativa`).
         "fields": {
             "strict": False,
             "schemas": {},
+            "common": {"fields": {}, "except": []},
         },
         # Tipo que `okf tasks` lista y crea con `promote`. El vocabulario es
         # del vault; este es el nombre acordado en la fase 0 del rediseño.
@@ -389,6 +391,23 @@ class Config:
         fields = self._data["types"].get("fields") or {}
         schemas = fields.get("schemas") if isinstance(fields, dict) else None
         return dict(schemas) if isinstance(schemas, dict) else {}
+
+    @property
+    def fields_common(self) -> dict:
+        """`types.fields.common.fields`: esquema que aplica a todos los tipos
+        (salvo `fields_common_except`); el esquema del tipo lo pisa campo a campo."""
+        fields = self._data["types"].get("fields") or {}
+        common = fields.get("common") if isinstance(fields, dict) else None
+        schema = common.get("fields") if isinstance(common, dict) else None
+        return dict(schema) if isinstance(schema, dict) else {}
+
+    @property
+    def fields_common_except(self) -> set:
+        """`types.fields.common.except`: tipos a los que el esquema común no aplica."""
+        fields = self._data["types"].get("fields") or {}
+        common = fields.get("common") if isinstance(fields, dict) else None
+        exc = common.get("except") if isinstance(common, dict) else None
+        return {str(t) for t in exc} if isinstance(exc, list) else set()
 
     @property
     def fields_strict(self) -> bool:

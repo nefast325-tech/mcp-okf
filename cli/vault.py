@@ -14,6 +14,7 @@ from pathlib import Path
 from cli.access import (  # noqa: F401
     get_scope,
     in_scope_file,
+    is_field_scope,
     is_readonly,
     normalize_scope,
     resolve_scope,

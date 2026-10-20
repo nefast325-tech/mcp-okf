@@ -48,7 +48,8 @@ def build_parser():
     parser.add_argument("--config", type=str, default=None,
                         help="Path to .okf.config.yaml (default: <vault>/.okf.config.yaml)")
     parser.add_argument("--scope", type=str, default=None,
-                        help="Subárbol legible (modo público). Default: $OKF_SCOPE o vault completo")
+                        help="Alcance legible (modo público): un subárbol ('publico') o un campo "
+                             "('iniciativa=caribe-tropical'). Default: $OKF_SCOPE o vault completo")
     parser.add_argument("--version", action="version",
                         version=f"okf {__version__}",
                         help="Show the installed version and exit")
@@ -419,7 +420,7 @@ def main(argv=None):
     # ── Política de acceso: scope de subárbol y modo solo-lectura ──
     from cli.access import is_readonly, resolve_scope, set_scope, WRITE_COMMANDS
     try:
-        set_scope(resolve_scope(getattr(args, "scope", None)))
+        set_scope(resolve_scope(getattr(args, "scope", None)), vault=vault)
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
