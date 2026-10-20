@@ -16,6 +16,8 @@ Signals:
   6. type: Decision no status   → decision without closure
   7. description vs body        → description describes problems
      that the body already solved (checkboxes [x] > 70%)
+  8. verification overdue       → `revisar_el` (or `verificado_el` + the
+     type's `types.review` days) is in the past (cli/verificacion.py)
 
 Classification:
   🔴 STALE     — 3+ signals
@@ -270,6 +272,15 @@ def collect_stale(vault, timestamp_days=90, propuesta_days=30,
             if total >= 3 and completed / total >= checkbox_ratio:
                 signals.append(f"outdated desc ({completed}/{total} tasks ✓)")
                 details["tasks_completed"] = f"{completed}/{total}"
+
+        # ── Señal 8: verificación vencida ──
+        # La fecha sale de `revisar_el` o de `verificado_el` + el plazo del
+        # tipo (types.review). Sin plazo ni fecha, la señal no aplica.
+        from cli.verificacion import overdue_days
+        overdue = overdue_days(config, concept_type, fm, rel, today=today.date())
+        if overdue is not None:
+            signals.append(f"verification overdue ({overdue}d)")
+            details["verification_overdue_days"] = overdue
 
         # ── Clasificar ──
         count = len(signals)

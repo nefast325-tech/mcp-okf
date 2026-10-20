@@ -345,6 +345,63 @@ replaces the checkbox with a link to the task, so `search --todos` and `board`
 stop counting it twice. Creating, moving and assigning need no extra command:
 `new --type Task --field responsable=…`, `edit --status …`, `edit --field …`.
 
+### Fields that resolve to a note (`resolves`)
+
+A field can require that its value names an existing note of a type, instead
+of a word from a list: who decided (`decidida_por`) and who does the work
+(`responsable`) resolve to a `Persona`. The value matches the note's file name
+or its entity folder (`personas/rafael/rafael-hernandez.md` answers to
+`rafael` and `rafael-hernandez`); `values` still works alongside for names
+that have no note (an agent, say):
+
+```yaml
+types:
+  fields:
+    schemas:
+      Decision:
+        decidida_por: {required: true, resolves: Persona}
+        decidida_el:  {required: true, format: date}
+      Task:
+        responsable:  {required: true, resolves: Persona, values: [skynet]}
+```
+
+### Verification dates: `verificado_el` and `revisar_el`
+
+Knowledge is true until it stops being true. `verificado_el` is the date the
+content was last checked against its source; `revisar_el` is when to check
+again, and it is optional: when absent it is derived from `verificado_el` plus
+the type's period (one fact lives in one place). Periods are declared per type
+or per path prefix, and a prefix wins over the type (a public price sheet
+expires sooner than a lesson):
+
+```yaml
+types:
+  review:
+    strict: false          # dates must be ISO and in order; error with true
+    days: {Research: 90, Insight: 90, Lesson: 180}
+    paths: {publico/: 30}
+```
+
+`new` stamps `verificado_el` with today's date on types that have a period;
+`stale` adds signal 8 (`verification overdue`) when the date has passed;
+`review` lists the overdue notes next to the `cyber.review_on` ones (with
+`kind: verificacion` in the JSON). Without `types.review`, nothing changes.
+
+### The current version of a superseded note
+
+A note in its replaced state (`superada`, `reemplazada`) has a successor: the
+note that declares `corrige` towards it. `traverse` follows that chain and
+jumps to the current version by default (the visited node lists what it
+skipped under `superseded`); `search` hides replaced notes unless you ask for
+their status or pass `--all-versions`. `validate` warns, never errors, when a
+current note `extiende`/`fundamenta`/`depende` on a replaced one.
+
+```bash
+okf traverse insights/old-insight --edge-type extiende   # starts from the current version
+okf traverse insights/old-insight --edge-type extiende --all-versions
+okf search --type Insight --all-versions
+```
+
 ### `okf stamp` — timestamp follows content
 
 `timestamp` is the last meaningful change. `edit` refreshes it only when the

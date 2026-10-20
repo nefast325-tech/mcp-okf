@@ -360,7 +360,7 @@ def run(args, vault, config=None):
         # tiene que cumplirlo (campo exigido que se borra, valor fuera de la
         # lista, fecha mal escrita).
         from cli.fields import check_fields, fields_strict
-        field_problems = check_fields(config, concept_type, fields)
+        field_problems = check_fields(config, concept_type, fields, vault=vault)
         if field_problems and fields_strict(config):
             for problem in field_problems:
                 print(f"❌ {problem}", file=sys.stderr)

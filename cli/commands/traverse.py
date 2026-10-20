@@ -18,6 +18,11 @@ Semantics (Decision "Every traverse is an ontological search", 2026-08-01):
     type first. The superset is never lost.
     --filter turns edge_type into exclusion: only edges of that type
     (previous behavior, for queries asking for a single type).
+
+Versión vigente (fase 4, cli/vigente.py): una nota en su estado de reemplazo
+(`superada`, `reemplazada`) se salta por defecto hacia la que la `corrige`,
+siguiendo la cadena hasta la vigente; el nodo visitado anota en `superseded`
+las versiones que se saltaron. --all-versions recorre la cadena tal cual.
 """
 
 import json
@@ -150,6 +155,7 @@ def run(args, vault, config=None):
     no_cyber = getattr(args, "no_cyber", False)
     edge_type_filter = getattr(args, "edge_type", None)
     filter_mode = getattr(args, "filter", False)  # --filter: edge_type excluye (default: anotación)
+    all_versions = getattr(args, "all_versions", False)
     if filter_mode and not edge_type_filter:
         print("⚠️  --filter without --edge-type: does not filter anything. Use --edge-type <type> --filter.",
               file=sys.stderr)
@@ -158,11 +164,31 @@ def run(args, vault, config=None):
     graph = build_graph(vault)
     name_index = build_name_index(vault)
 
+    # Versión vigente de cada nota reemplazada (vacío con --all-versions o
+    # sin esquema de estados): el recorrido salta a ella.
+    from cli.vigente import build_superseded_map
+    superseded_map = {} if all_versions else build_superseded_map(vault, graph, config)
+    skipped_versions = {}  # vigente → [reemplazadas que se saltaron para llegar]
+
+    def _vigente(path):
+        cur = superseded_map.get(path)
+        if cur is None:
+            return path
+        skipped_versions.setdefault(cur, [])
+        if path not in skipped_versions[cur]:
+            skipped_versions[cur].append(path)
+        return cur
+
     # Resolver seeds. Las que no resuelven se ignoran con warning.
     resolved_seeds = []
     warnings = []
     for seed_candidate in seeds_candidates:
         resolved = _resolve_name(seed_candidate, graph)
+        if resolved is not None and resolved in superseded_map:
+            vigente = _vigente(resolved)
+            warnings.append(f"Superseded: {resolved} → starting from its current "
+                            f"version {vigente} (--all-versions to walk the chain)")
+            resolved = vigente
         if resolved is None:
             warnings.append(f"Not found: {seed_candidate}")
         elif resolved in resolved_seeds:
@@ -215,6 +241,9 @@ def run(args, vault, config=None):
         # Incluir seed en multi-seed mode para trazabilidad
         if len(resolved_seeds) > 1:
             node["seed"] = seed_path
+        # Versiones reemplazadas que se saltaron para llegar a este nodo
+        if current_path in skipped_versions:
+            node["superseded"] = list(skipped_versions[current_path])
 
         nodes.append(node)
 
@@ -263,6 +292,15 @@ def run(args, vault, config=None):
             neighbors.sort(key=lambda x: x[2], reverse=True)
 
         for neighbor_path, n_edge_type, n_score in neighbors:
+            # Una vecina reemplazada se cambia por su versión vigente (salvo
+            # --all-versions). La arista `corrige` hacia la reemplazada se
+            # omite: llevaría de la vigente a la vieja y de vuelta.
+            if neighbor_path in superseded_map:
+                if n_edge_type == "corrige" and superseded_map[neighbor_path] == current_path:
+                    continue
+                neighbor_path = _vigente(neighbor_path)
+                if neighbor_path == current_path:
+                    continue
             if neighbor_path not in visited:
                 # Modo filtro (explícito): excluir aristas que no matchean el tipo
                 # Modo anotación (default): el superset completo siempre entra
@@ -286,6 +324,7 @@ def run(args, vault, config=None):
             result["origin"] = resolved_seeds[0]
         else:
             result["seeds"] = resolved_seeds
+        result["all_versions"] = bool(all_versions)
         if edge_type_filter:
             result["edge_type"] = edge_type_filter
             result["filter"] = filter_mode
@@ -390,6 +429,8 @@ def run(args, vault, config=None):
         if node["from"]:
             score_str = f" ({node.get('score', 0):.2f})" if node.get("score", 0) > 0 else ""
             print(f"{indent}   via {node['edge_type']}{score_str} ← {node['from']}")
+        if node.get("superseded"):
+            print(f"{indent}   ♻️  vigente de: {', '.join(node['superseded'])}")
         if len(resolved_seeds) > 1 and node.get("seed"):
             print(f"{indent}   🌰 seed: {node['seed']}")
         print()

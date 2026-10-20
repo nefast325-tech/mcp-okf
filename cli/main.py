@@ -81,6 +81,10 @@ def build_parser():
                            help="Show typed edges between results at the end")
     sp_search.add_argument("--json", action="store_true", default=False,
                            help="JSON output")
+    sp_search.add_argument("--all-versions", dest="all_versions", action="store_true",
+                           default=False,
+                           help="Include superseded notes (hidden by default; "
+                                "--status <state> also shows them)")
     sp_search.add_argument("--cyber-field", type=str, default=None,
                            help="Filter by cyber field: (sensor, outcome, etc.)")
     sp_search.add_argument("--cyber-value", type=str, default=None,
@@ -122,6 +126,10 @@ def build_parser():
                              help="Declare the explored ontological type (annotation; does not filter)")
     sp_traverse.add_argument("--filter", action="store_true", default=False,
                              help="With --edge-type: exclude edges not of that type")
+    sp_traverse.add_argument("--all-versions", dest="all_versions", action="store_true",
+                             default=False,
+                             help="Walk superseded notes as they are (default: jump to "
+                                  "the current version via the corrige chain)")
 
     # ── graph ──
     sp_graph = subparsers.add_parser("graph", help="Analyze the wikilink graph")
