@@ -530,7 +530,7 @@ def _run(args: list[str], tool_name: str = "unknown", params: dict | None = None
 
 
 @_mcp_tool()
-def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: bool = False, json_output: bool = False, seeds: str = "", edge_type: str = "", filter: bool = False) -> str:
+def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: bool = False, json_output: bool = False, seeds: str = "", edge_type: str = "", filter: bool = False, all_versions: bool = False) -> str:
     """Semantic traversal of the OKF graph. Returns concept frontmatter + neighborhood (wikilinks, backlinks, cyber.corrects).
 
     PRIMARY USE for querying the vault. Prefer over search.
@@ -551,6 +551,8 @@ def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: 
         edge_type: MANDATORY — ontological type explored (extiende, refina, fundamenta,
                    aplica, depende, corrige). Annotates without filtering.
         filter: If True, edge_type excludes edges not of that type (explicit exclusion).
+        all_versions: If True, walks superseded notes as they are. By default a note in
+                      its replaced state is skipped to its current version (corrige chain).
     """
     if not edge_type or not edge_type.strip():
         return "[error] traverse requires edge_type: every traverse is an ontological search — declare the explored type (extiende|refina|fundamenta|aplica|depende|corrige). See Decision 2026-08-01."
@@ -579,11 +581,14 @@ def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: 
     if filter:
         args.append("--filter")
         params["filter"] = True
+    if all_versions:
+        args.append("--all-versions")
+        params["all_versions"] = True
     return _run(args, tool_name="okf_traverse", params=params)
 
 
 @_mcp_tool()
-def search(query: str = "", type: str = "", status: str = "", cyber_field: str = "", cyber_value: str = "", todos: bool = False, json_output: bool = False, since: str = "", until: str = "", with_graph: bool = False) -> str:
+def search(query: str = "", type: str = "", status: str = "", cyber_field: str = "", cyber_value: str = "", todos: bool = False, json_output: bool = False, since: str = "", until: str = "", with_graph: bool = False, all_versions: bool = False) -> str:
     """FTS5 search in the OKF vault + pending tasks list (todos=true). FALLBACK — prefer traverse or index reads.
 
     Use only when:
@@ -626,6 +631,8 @@ def search(query: str = "", type: str = "", status: str = "", cyber_field: str =
         args += ["--until", until]
     if with_graph:
         args.append("--with-graph")
+    if all_versions:
+        args.append("--all-versions")
     return _run(args, tool_name="okf_search", params={
         "query": query, "type": type, "status": status,
         "cyber_field": cyber_field, "cyber_value": cyber_value,

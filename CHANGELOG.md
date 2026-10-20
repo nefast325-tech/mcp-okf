@@ -5,6 +5,23 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
+Fase 4 del rediseño del vault de cliente: la verdad tiene fecha, quien decide es una nota y una nota reemplazada señala su versión vigente. Las tres piezas son opt-in por vault: sin `resolves` en `types.fields`, sin `types.review` y sin esquema de estados, el comportamiento es el de v0.4.28.
+
+### Added
+- **`resolves: <Tipo>` en `types.fields`** (cli/fields.py): el valor de un campo tiene que nombrar una nota existente de ese tipo —por el nombre del archivo o de su carpeta de entidad (`personas/rafael/…` responde a `rafael`)— o estar en `values`. Es lo que hace que `decidida_por` y `responsable` resuelvan a una `Persona` en vez de a texto libre. `validate`, `new` y `edit` lo aplican con la misma severidad del resto del esquema de campos; sin vault a mano (uso de librería) solo cuenta `values`.
+- **`verificado_el` / `revisar_el`** (cli/verificacion.py): fecha en que una nota se comprobó contra su fuente y cuándo volver a comprobarla. `revisar_el` es opcional: se deriva de `verificado_el` más el plazo del tipo (`types.review.days`) o del prefijo de ruta (`types.review.paths`, que gana sobre el tipo). `validate` (validación 14) exige fechas ISO y en orden (aviso; error con `types.review.strict`); `new` sella `verificado_el` con la fecha de hoy en los tipos con plazo; `stale` suma la señal 8 (`verification overdue (Nd)`); `review` lista lo vencido en una sección aparte y con `kind: verificacion` en el JSON (los ítems de `cyber.review_on` llevan `kind: cyber`).
+- **Versión vigente** (cli/vigente.py): a partir del estado de reemplazo del esquema y de las aristas `corrige`, el mapa `{reemplazada: vigente}` sigue la cadena hasta la nota que no está reemplazada. `traverse` salta a la vigente por defecto —el nodo visitado lista en `superseded` lo que saltó, una semilla reemplazada arranca desde su vigente con aviso, y la arista `corrige` de vuelta no se recorre— y `--all-versions` recorre la cadena tal cual. `search` oculta las reemplazadas salvo `--status <ese estado>` o `--all-versions`, y dice cuántas ocultó. El servidor MCP expone `all_versions` en `traverse` y `search`.
+- **`validate` avisa cuando una nota vigente se apoya en una reemplazada** (`extiende`, `fundamenta`, `depende`): nunca error, porque mover la arista a la versión vigente es decisión de quien edita.
+
+### Tests
+- `tests/test_fase4_verificacion_persona_vigente.py` (+23): `resolves` por carpeta y por archivo, `values` junto a `resolves`, texto libre rechazado, mensaje del campo exigido, `validate`/`new` con Persona; plazo por tipo y por ruta, fecha derivada y explícita, días vencidos, formato y orden (aviso y error), `new` sella la fecha solo en tipos con plazo y respeta `--field`, `stale` señal 8 y `review` (JSON y humano); mapa de vigentes con cadena de dos saltos, vacío sin esquema, `traverse` salta / `--all-versions` / semilla reemplazada, `search` oculta y muestra, y el aviso de apoyo en reemplazada (sin aviso en la propia cadena de `corrige`).
+- Suite: **508** (485 en v0.4.28).
+
+### Medido (2026-10-19, master del vault de cliente, config actual)
+- `validate --all`: **291 válidas, 0 errores, 1 aviso nuevo** — la decisión del bloque legal de la Circular 004 `extiende` el insight ya superado: el caso que la fase 4 nombra.
+- `search`: **8 notas reemplazadas ocultas** (3 insights, 5 decisiones). `traverse` desde el insight superado de la Circular 004 arranca en su versión vigente y la anota en `superseded`.
+- Con la config de la fase 4 cargada (Decision exige `decidida_por`/`decidida_el`, plazos por tipo): **59 decisiones** fallan por los dos campos que faltan, las **38 `Task`** fallan porque todavía no existe ninguna nota `Persona` a la que resolver, y hay **0 señales 8** porque ninguna nota tiene `verificado_el`. Es el tamaño de la migración, no un error del CLI.
+
 ---
 ## [2026-10-19] — v0.4.28
 

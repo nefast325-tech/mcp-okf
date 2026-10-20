@@ -1,4 +1,10 @@
-"""Command search — Search concepts and pending tasks in the vault."""
+"""Command search — Search concepts and pending tasks in the vault.
+
+Versión vigente (fase 4, cli/vigente.py): las notas en su estado de reemplazo
+(`superada`, `reemplazada`) no salen en los resultados salvo que se pida ese
+status con --status o se pase --all-versions. Cada una tiene una vigente
+(la que la `corrige`) y es esa la que responde la búsqueda.
+"""
 
 import json
 import re
@@ -463,6 +469,7 @@ def run(args, vault, config=None):
     until = getattr(args, "until", None)
 
     with_graph = getattr(args, "with_graph", False)
+    all_versions = getattr(args, "all_versions", False)
 
     if with_aging and not todos_mode:
         print("Error: --aging only works with --todos", file=sys.stderr)
@@ -491,6 +498,19 @@ def run(args, vault, config=None):
         return 0
 
     concepts = find_concepts(vault)
+
+    # Las reemplazadas se ocultan salvo --all-versions o --status <ese estado>
+    hidden_superseded = 0
+    if not all_versions and not filter_status:
+        from cli.states import is_replaced_status, schema_for
+        kept = []
+        for c in concepts:
+            if (schema_for(config, c["type"]) is not None
+                    and is_replaced_status(config, c["type"], c["status"])):
+                hidden_superseded += 1
+                continue
+            kept.append(c)
+        concepts = kept
 
     if query and query.strip():
         concepts = [c for c in concepts if matches_query(c, query)]
@@ -569,6 +589,9 @@ def run(args, vault, config=None):
         print(json.dumps(concepts, ensure_ascii=False, indent=2))
     else:
         _print_table(concepts)
+        if hidden_superseded:
+            print(f"\n({hidden_superseded} superseded note(s) hidden; "
+                  f"--all-versions or --status <state> to see them)")
         if with_graph and not todos_mode:
             edges = _find_typed_edges(concepts, vault)
             if edges:

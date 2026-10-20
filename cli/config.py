@@ -68,6 +68,14 @@ DEFAULTS: dict[str, Any] = {
         # Tipo que `okf tasks` lista y crea con `promote`. El vocabulario es
         # del vault; este es el nombre acordado en la fase 0 del rediseño.
         "task": "Task",
+        # Fechas de verificación (ver cli/verificacion.py): plazo en días por
+        # tipo (`days`) o por prefijo de ruta (`paths`, gana sobre el tipo).
+        # Vacío = `verificado_el`/`revisar_el` no se exigen ni se derivan.
+        "review": {
+            "strict": False,
+            "days": {},
+            "paths": {},
+        },
         "directory": {
             "Sistema": "sistema",
             "Agente": "agentes",
@@ -387,6 +395,26 @@ class Config:
         """`types.fields.strict`: True = incumplir el esquema de campos es error."""
         fields = self._data["types"].get("fields") or {}
         return bool(fields.get("strict", False)) if isinstance(fields, dict) else False
+
+    @property
+    def review_days(self) -> dict:
+        """`types.review.days`: {tipo: días} hasta volver a verificar una nota."""
+        review = self._data["types"].get("review") or {}
+        days = review.get("days") if isinstance(review, dict) else None
+        return dict(days) if isinstance(days, dict) else {}
+
+    @property
+    def review_paths(self) -> dict:
+        """`types.review.paths`: {prefijo de ruta: días}; manda sobre el tipo."""
+        review = self._data["types"].get("review") or {}
+        paths = review.get("paths") if isinstance(review, dict) else None
+        return dict(paths) if isinstance(paths, dict) else {}
+
+    @property
+    def review_strict(self) -> bool:
+        """`types.review.strict`: True = una fecha de verificación mal escrita es error."""
+        review = self._data["types"].get("review") or {}
+        return bool(review.get("strict", False)) if isinstance(review, dict) else False
 
     @property
     def types_task(self) -> str:

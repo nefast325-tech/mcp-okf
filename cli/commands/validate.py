@@ -15,8 +15,13 @@ Validates that:
 9. `status` matches the vault's state schema (`types.states` in config, see
    cli/states.py): warning by default, error with `types.states.strict`
 10. Declared fields match the vault's field schema (`types.fields`, see
-   cli/fields.py): required fields present, closed values, ISO dates —
+   cli/fields.py): required fields present, closed values, ISO dates, and
+   values that resolve to a note of a type (`resolves`) —
    warning by default, error with `types.fields.strict`
+11. Verification dates (`verificado_el`, `revisar_el`, see cli/verificacion.py)
+   are ISO and in order — warning by default, error with `types.review.strict`
+12. A current note that `extiende`/`fundamenta`/`depende` on a replaced one
+   gets a warning (never an error): follow the `corrige` chain instead
 
 Unlike parse_frontmatter, it has NO regex fallback.
 If the YAML is broken, it fails.
@@ -388,6 +393,7 @@ def _check_edge_type_consistency(filepath, vault, definitions=None, config=None,
     from cli.edge_types import VALID_EDGE_TYPES, validate_cross_type_pair, score_edge
     from cli.frontmatter import parse_frontmatter
     from cli.states import is_replaced_status, schema_for, states_strict
+    from cli.vigente import SUPPORT_EDGES
 
     strict_pairs = bool(getattr(config, "graph_strict_pairs", False)) if config else False
     errors = []
@@ -425,6 +431,27 @@ def _check_edge_type_consistency(filepath, vault, definitions=None, config=None,
         if target not in types_per_target:
             types_per_target[target] = set()
         types_per_target[target].add(edge_type)
+
+        if edge_type in SUPPORT_EDGES and schema_for(config, src_type) is not None \
+                and not is_replaced_status(config, src_type, fm.get("status")):
+            # Fase 4: una nota vigente que se apoya (extiende, fundamenta,
+            # depende) en una ya reemplazada sigue una verdad vieja. Aviso
+            # siempre, nunca error: la cadena de corrige dice cuál es la
+            # vigente, y mover la arista es decisión de quien edita.
+            target_file = _resolve_edge_target(vault, target, filepath.parent, name_index)
+            if target_file is not None:
+                try:
+                    t_fm, _ = parse_frontmatter(target_file.read_text(encoding="utf-8"))
+                except Exception:
+                    t_fm = None
+                if t_fm:
+                    t_type = str(t_fm.get("type", ""))
+                    if schema_for(config, t_type) is not None and is_replaced_status(
+                            config, t_type, t_fm.get("status")):
+                        warnings.append(
+                            f"  links: {rel} '{edge_type}' → '{target}', que está en "
+                            f"'{t_fm.get('status')}' (reemplazada): apoyate en su versión "
+                            f"vigente (la que la 'corrige')")
 
         if edge_type == "corrige":
             target_file = _resolve_edge_target(vault, target, filepath.parent, name_index)
@@ -536,16 +563,30 @@ def _check_states(fm, config, text=None):
     return [], problems + warnings
 
 
-def _check_fields(fm, config):
+def _check_fields(fm, config, vault=None):
     """Validation 13: declared fields against the vault's field schema
     (cli/fields.py). Same severity rule as the state schema: errors with
-    `types.fields.strict`, warnings otherwise; nothing without a schema."""
+    `types.fields.strict`, warnings otherwise; nothing without a schema.
+    `vault` lets a field `resolves` to a note of a type (fase 4)."""
     from cli.fields import check_fields, fields_strict
 
-    problems = check_fields(config, str(fm.get("type", "")), fm)
+    problems = check_fields(config, str(fm.get("type", "")), fm, vault=vault)
     if not problems:
         return [], []
     if fields_strict(config):
+        return problems, []
+    return [], problems
+
+
+def _check_review_dates(fm, config):
+    """Validation 14: fechas de verificación (cli/verificacion.py). Errores con
+    `types.review.strict`, avisos si no; sin las claves no hay nada que decir."""
+    from cli.verificacion import check_review_dates, review_strict
+
+    problems = check_review_dates(config, str(fm.get("type", "")), fm)
+    if not problems:
+        return [], []
+    if review_strict(config):
         return problems, []
     return [], problems
 
@@ -670,9 +711,16 @@ def _validate_file(filepath, vault, definitions=None, name_index=None, config=No
     all_errors.extend(state_errors)
 
     # ── Validation 13: declared fields against the field schema (cli/fields.py) ──
-    field_errors, field_warnings = _check_fields(fm, config)
+    field_errors, field_warnings = _check_fields(fm, config, vault=vault)
     all_errors.extend(field_errors)
     state_warnings = state_warnings + field_warnings
+
+    # ── Validation 14: fechas de verificación (cli/verificacion.py) ──
+    # `verificado_el` y `revisar_el` tienen que ser fechas ISO y estar en
+    # orden. Error con `types.review.strict`, aviso si no.
+    review_errors, review_warnings = _check_review_dates(fm, config)
+    all_errors.extend(review_errors)
+    state_warnings = state_warnings + review_warnings
 
     # ── Validation 7: typed edge consistency ──
     edge_errors, edge_warnings = _check_edge_type_consistency(

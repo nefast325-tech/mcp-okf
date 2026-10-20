@@ -531,13 +531,22 @@ def run(args, vault, config=None):
     # (`Task` exige `responsable`) no se crea sin ellos en modo estricto.
     from cli.fields import check_fields, fields_strict
     extra_values = _extra_field_values(getattr(args, "fields", None))
-    field_problems = check_fields(config, concept_type, extra_values)
+    field_problems = check_fields(config, concept_type, extra_values, vault=vault)
     if field_problems and fields_strict(config):
         for problem in field_problems:
             print(f"❌ {problem} (pasalo con --field campo=valor)", file=sys.stderr)
         return 1
     for problem in field_problems:
         print(f"⚠️  {problem}", file=sys.stderr)
+
+    # Fechas de verificación (cli/verificacion.py): una nota de un tipo con
+    # plazo nace verificada hoy, salvo que --field la fije. `revisar_el` no se
+    # escribe: se deriva del plazo (un hecho en un solo lugar).
+    from cli.verificacion import VERIFIED_FIELD, review_days_for
+    if (review_days_for(config, concept_type) is not None
+            and VERIFIED_FIELD not in extra_values and not omit_timestamps):
+        from datetime import date as _date
+        extra_lines.append(f"{VERIFIED_FIELD}: {_date.today().isoformat()}")
 
     # Nombre del archivo: --filename lo fija exacto (sin slugificar, para no
     # romper convenciones con guiones bajos); si no, se deriva del slug del
