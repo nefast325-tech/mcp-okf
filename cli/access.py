@@ -6,6 +6,11 @@ argumento del CLI):
 - ``OKF_READONLY=true``   → los comandos de escritura se rechazan.
 - ``OKF_SCOPE=<prefijo>`` → toda resolución de conceptos, búsqueda, grafo y
   descubrimiento de archivos queda acotada a ese subárbol del vault.
+- ``OKF_SCOPE=<campo>=<valor>`` (fase 5) → la frontera es un CAMPO del
+  frontmatter, no una ruta: solo se ven las notas cuyo ``<campo>`` (texto o
+  lista) contiene ``<valor>``. Una nota sin el campo queda fuera (fail-closed),
+  y también los índices. Es lo que acota una instancia a una iniciativa
+  (``--scope iniciativa=caribe-tropical``) sin mover archivos de carpeta.
 
 Motivación (2026-09-11): el agente de servicio al cliente de la cartera
 inmobiliaria (perfil `atencion`, expuesto por webchat y WhatsApp) es un agente
@@ -20,6 +25,7 @@ no se puede saltear agregando una tool nueva al server.
 """
 
 import os
+import re
 from pathlib import Path
 
 READONLY_ENV = "OKF_READONLY"
@@ -41,6 +47,13 @@ _TRUTHY = {"1", "true", "yes", "on", "si", "sí"}
 
 # Scope activo del proceso (lo fija main() desde --scope / $OKF_SCOPE).
 _current_scope = None
+# Scope por campo: (campo, valor), el vault contra el que se evalúa y el set
+# de rutas permitidas, construido una vez por proceso.
+_field_scope = None
+_scope_vault = None
+_field_allowed = None
+
+_FIELD_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
 
 def _truthy(value):
@@ -65,6 +78,14 @@ def normalize_scope(prefix):
     raw = str(prefix).strip().replace("\\", "/")
     if raw in ("", "/", "."):
         return None
+    if "=" in raw:
+        field, _, value = raw.partition("=")
+        field, value = field.strip(), value.strip()
+        if not _FIELD_NAME_RE.match(field) or not value or "/" in value or ".." in value:
+            raise ValueError(
+                f"{SCOPE_ENV} inválido: '{prefix}' no es 'campo=valor' (campo: letras, "
+                f"dígitos, '_' o '-'; valor: no vacío, sin '/' ni '..')")
+        return f"{field}={value}"
     parts = [p for p in raw.split("/") if p not in ("", ".")]
     if ".." in parts:
         raise ValueError(
@@ -81,11 +102,62 @@ def resolve_scope(cli_arg=None, env=None):
     return normalize_scope(env.get(SCOPE_ENV))
 
 
-def set_scope(prefix):
-    """Fija el scope activo del proceso. Devuelve el prefijo normalizado."""
-    global _current_scope
+def set_scope(prefix, vault=None):
+    """Fija el scope activo del proceso. Devuelve el prefijo normalizado.
+
+    `vault` hace falta para un scope por campo (hay que leer el frontmatter);
+    sin él, un scope por campo no deja ver nada (fail-closed).
+    """
+    global _current_scope, _field_scope, _scope_vault, _field_allowed
     _current_scope = normalize_scope(prefix)
+    _field_scope = tuple(_current_scope.split("=", 1)) if is_field_scope(_current_scope) else None
+    _scope_vault = Path(vault) if vault is not None else None
+    _field_allowed = None
     return _current_scope
+
+
+def is_field_scope(scope=None):
+    """True si el scope (o el activo) es de la forma campo=valor."""
+    sc = _current_scope if scope is None else scope
+    return bool(sc) and "=" in str(sc)
+
+
+def _field_matches(fm, field, value):
+    raw = (fm or {}).get(field)
+    if raw is None:
+        return False
+    items = raw if isinstance(raw, list) else [raw]
+    return any(str(i).strip() == value for i in items)
+
+
+def _allowed_paths():
+    """Rutas (relativas, con '/') visibles bajo el scope por campo activo.
+
+    Se recorre el vault UNA vez por proceso, sin pasar por find_md_files (que
+    consulta este mismo scope). Las exclusiones son las del vault
+    (cli.vault.EXCLUDE_*, que apply_config pisa desde la config). Sin vault
+    conocido el set queda vacío: nada se ve.
+    """
+    global _field_allowed
+    if _field_allowed is not None:
+        return _field_allowed
+    allowed = set()
+    if _field_scope and _scope_vault is not None:
+        from cli.frontmatter import parse_frontmatter
+        from cli.vault import EXCLUDE_DIRS, EXCLUDE_FILES
+        field, value = _field_scope
+        for md in _scope_vault.rglob("*.md"):
+            parts = md.relative_to(_scope_vault).parts
+            if md.name in EXCLUDE_FILES or any(p in EXCLUDE_DIRS for p in parts):
+                continue
+            try:
+                fm, _ = parse_frontmatter(md.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if fm and _field_matches(fm, field, value):
+                allowed.add("/".join(parts))
+    _field_allowed = allowed
+    return allowed
 
 
 def get_scope():
@@ -110,6 +182,14 @@ def under_scope(relpath, scope=None):
     if rel.startswith("./"):
         rel = rel[2:]
     rel = rel.lstrip("/")
+    if is_field_scope(sc):
+        if sc != _current_scope:
+            # Un scope por campo distinto del activo no tiene set construido:
+            # fail-closed.
+            return False
+        if not rel.endswith(".md"):
+            rel += ".md"
+        return rel in _allowed_paths()
     return rel == sc or rel.startswith(sc + "/")
 
 
@@ -126,4 +206,8 @@ def scope_root(vault, scope=None):
     """Directorio raíz de trabajo: <vault>/<scope>, o el vault si no hay scope."""
     sc = _current_scope if scope is None else scope
     vault = Path(vault)
-    return (vault / sc) if sc else vault
+    if not sc or is_field_scope(sc):
+        # Un scope por campo no tiene carpeta propia: el índice de la raíz
+        # no es visible (in_scope_file lo rechaza), así que no hay atajo.
+        return vault
+    return vault / sc
