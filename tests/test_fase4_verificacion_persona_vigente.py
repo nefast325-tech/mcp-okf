@@ -395,5 +395,41 @@ class TestVigente(Base):
         self.assertNotIn("apoyate", err)
 
 
+class TestHealthSmokeConCamposExigidos(Base):
+    def test_el_smoke_de_new_pasa_los_campos_que_el_esquema_exige(self):
+        from cli.commands.health import _smoke_fields
+        args = _smoke_fields(self.vault, self.config, "Decision")
+        # decidida_por: `values` manda (skynet); decidida_el: fecha de hoy
+        self.assertIn("--field", args)
+        self.assertIn("decidida_por=skynet", args)
+        self.assertIn(f"decidida_el={date.today().isoformat()}", args)
+        # Sin `values`, resuelve al primer nombre de Persona que existe
+        cfg = _config()
+        cfg["types"]["fields"]["schemas"]["Decision"]["decidida_por"] = {"required": True,
+                                                                          "resolves": "Persona"}
+        (self.vault / ".okf.config.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        reset_resolve_cache()
+        args = _smoke_fields(self.vault, Config(self.vault), "Decision")
+        self.assertIn("decidida_por=jaime", args)   # primero en orden alfabético
+        # Sin esquema no agrega nada
+        self.assertEqual(_smoke_fields(self.vault, self.config, "Insight"), [])
+
+    def test_el_new_de_humo_corre_con_esos_campos(self):
+        import subprocess, sys
+        from cli.commands.health import _smoke_fields
+        cmd = [sys.executable, "-m", "cli", "--vault", str(self.vault), "new", "--type", "Decision",
+               "--title", "Health Check Smoke Test", "--description", "Automatic health check test.",
+               "--dry-run"]
+        import os
+        env = {**os.environ, "OKF_SUPPRESS_TELEMETRY": "1", "PYTHONPATH": str(Path(__file__).resolve().parent.parent)}
+        sin = subprocess.run(cmd, capture_output=True, text=True, env=env,
+                             cwd=str(Path(__file__).resolve().parent.parent))
+        self.assertNotEqual(sin.returncode, 0)
+        self.assertIn("exige el campo", sin.stderr)
+        con = subprocess.run(cmd + _smoke_fields(self.vault, self.config), capture_output=True,
+                             text=True, env=env, cwd=str(Path(__file__).resolve().parent.parent))
+        self.assertEqual(con.returncode, 0, con.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -13,9 +13,12 @@ Fase 4 del rediseño del vault de cliente: la verdad tiene fecha, quien decide e
 - **Versión vigente** (cli/vigente.py): a partir del estado de reemplazo del esquema y de las aristas `corrige`, el mapa `{reemplazada: vigente}` sigue la cadena hasta la nota que no está reemplazada. `traverse` salta a la vigente por defecto —el nodo visitado lista en `superseded` lo que saltó, una semilla reemplazada arranca desde su vigente con aviso, y la arista `corrige` de vuelta no se recorre— y `--all-versions` recorre la cadena tal cual. `search` oculta las reemplazadas salvo `--status <ese estado>` o `--all-versions`, y dice cuántas ocultó. El servidor MCP expone `all_versions` en `traverse` y `search`.
 - **`validate` avisa cuando una nota vigente se apoya en una reemplazada** (`extiende`, `fundamenta`, `depende`): nunca error, porque mover la arista a la versión vigente es decisión de quien edita.
 
+### Fixed
+- **`health` daba 7/8 en un vault cuyo `Decision` exige campos**: la prueba de humo `new --type Decision --dry-run` no pasaba ningún `--field`, así que «'Decision' exige el campo 'decidida_por'» la hacía fallar con el CLI sano. Medido 19-oct-2026 sobre la rama de migración del vault de cliente. Ahora `_smoke_fields` arma los `--field` desde el esquema del tipo (primer `values`, primer nombre que resuelve, hoy para una fecha, «smoke» para texto libre). Tests: +2 (`_smoke_fields` y el `new` de humo como subproceso, que falla sin los campos y pasa con ellos).
+
 ### Tests
 - `tests/test_fase4_verificacion_persona_vigente.py` (+23): `resolves` por carpeta y por archivo, `values` junto a `resolves`, texto libre rechazado, mensaje del campo exigido, `validate`/`new` con Persona; plazo por tipo y por ruta, fecha derivada y explícita, días vencidos, formato y orden (aviso y error), `new` sella la fecha solo en tipos con plazo y respeta `--field`, `stale` señal 8 y `review` (JSON y humano); mapa de vigentes con cadena de dos saltos, vacío sin esquema, `traverse` salta / `--all-versions` / semilla reemplazada, `search` oculta y muestra, y el aviso de apoyo en reemplazada (sin aviso en la propia cadena de `corrige`).
-- Suite: **508** (485 en v0.4.28).
+- Suite: **510** (485 en v0.4.28).
 
 ### Medido (2026-10-19, master del vault de cliente, config actual)
 - `validate --all`: **291 válidas, 0 errores, 1 aviso nuevo** — la decisión del bloque legal de la Circular 004 `extiende` el insight ya superado: el caso que la fase 4 nombra.

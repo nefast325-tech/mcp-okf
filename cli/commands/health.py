@@ -252,7 +252,43 @@ def _check_broken_links(vault):
 
 # ── Check 5: Scripts funcionales ──
 
-def _check_scripts(vault, smoke_entry_point="tp3-cibernetico"):
+def _smoke_fields(vault, config, concept_type="Decision"):
+    """`--field` para que el `new --dry-run` de humo cumpla el esquema de campos.
+
+    Un vault que exige campos en `Decision` (`decidida_por` que resuelve a una
+    Persona, `decidida_el` fecha, `iniciativa` de una lista) hacía fallar el
+    smoke test aunque el CLI estuviera sano: medido 19-oct-2026 en el vault de
+    cliente, `health` 7/8 por «'Decision' exige el campo 'decidida_por'». El
+    valor de prueba sale del propio esquema: el primero de `values`, el primer
+    nombre que resuelve, hoy para una fecha, «smoke» si es texto libre.
+    """
+    if config is None:
+        return []
+    from datetime import date
+    from cli.fields import fields_schema_for, resolvable_names
+    schema = fields_schema_for(config, concept_type) or {}
+    args = []
+    for name, rules in schema.items():
+        if not rules.get("required"):
+            continue
+        values = rules.get("values") or []
+        resolves = rules.get("resolves")
+        if values:
+            value = str(values[0])
+        elif resolves:
+            known = sorted(resolvable_names(vault, resolves, config=config))
+            if not known:
+                continue  # sin nota a la que resolver no hay valor válido
+            value = known[0]
+        elif rules.get("format") == "date":
+            value = date.today().isoformat()
+        else:
+            value = "smoke"
+        args += ["--field", f"{name}={value}"]
+    return args
+
+
+def _check_scripts(vault, smoke_entry_point="tp3-cibernetico", config=None):
     """Smoke test: CLI commands work (via subprocess, self-contained).
 
     The smoke tests are independent subprocesses, so they run in parallel
@@ -270,7 +306,8 @@ def _check_scripts(vault, smoke_entry_point="tp3-cibernetico"):
         (["audit"], 10),
         (["review", "--count"], 10),
         (["new", "--type", "Decision", "--title", "Health Check Smoke Test",
-          "--description", "Automatic health check test.", "--dry-run"], 10),
+          "--description", "Automatic health check test.", "--dry-run"]
+         + _smoke_fields(vault, config), 10),
     ]
 
     def _run_one(cmd_args, timeout):
@@ -648,7 +685,8 @@ def run(args, vault, config=None):
     all_warnings.extend(broken[:15])
 
     # 5. Scripts
-    scripts_ok, scripts_failed = _check_scripts(vault, smoke_entry_point=smoke_entry)
+    scripts_ok, scripts_failed = _check_scripts(vault, smoke_entry_point=smoke_entry,
+                                                config=config)
     results["scripts"] = {"ok": scripts_ok, "failed": len(scripts_failed), "details": scripts_failed}
     all_errors.extend(scripts_failed)
 
