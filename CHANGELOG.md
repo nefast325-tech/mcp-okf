@@ -5,6 +5,11 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
+---
+## [2026-10-21] — v0.4.29
+
+Las fases 4 y 5 del rediseño del vault de cliente, en una etiqueta: la verdad tiene fecha y quien decide es una nota (#39), y cada nota dice a qué iniciativa pertenece con el alcance de una instancia del MCP por campo (#40). Las dos son opt-in por vault.
+
 ### Fase 5 — la iniciativa como campo y el alcance por campo
 
 - **`types.fields.common`** (cli/fields.py): un esquema de campos que vale para todos los tipos salvo los de `except`; el esquema del tipo lo pisa campo a campo. Es como el vault exige `iniciativa` en toda nota menos en la capa de registro y en las tareas (que la heredan de la nota a la que aplican) sin repetir la regla diez veces.
@@ -34,6 +39,14 @@ Fase 4 del rediseño del vault de cliente: la verdad tiene fecha, quien decide e
 - `validate --all`: **291 válidas, 0 errores, 1 aviso nuevo** — la decisión del bloque legal de la Circular 004 `extiende` el insight ya superado: el caso que la fase 4 nombra.
 - `search`: **8 notas reemplazadas ocultas** (3 insights, 5 decisiones). `traverse` desde el insight superado de la Circular 004 arranca en su versión vigente y la anota en `superseded`.
 - Con la config de la fase 4 cargada (Decision exige `decidida_por`/`decidida_el`, plazos por tipo): **59 decisiones** fallan por los dos campos que faltan, las **38 `Task`** fallan porque todavía no existe ninguna nota `Persona` a la que resolver, y hay **0 señales 8** porque ninguna nota tiene `verificado_el`. Es el tamaño de la migración, no un error del CLI.
+
+### Verificado antes de mergear (2026-10-21)
+
+- Suite en el worktree del PR y en un entorno limpio tipo CI (`env -i` + venv scratch instalado con `pip install -e`): **510** con el #39 y **523** con el #40. Los números del CHANGELOG eran correctos; los cuerpos de los PR decían 508 y 521 (arrastraban la base de v0.4.28: 485+23 y 510+13).
+- Baseline RED: el archivo de tests del #39 falla en `master` con `ImportError: reset_resolve_cache`; los 12 de 13 del #40 fallan con `cli/` revertido.
+- Medido de nuevo sobre un clon fresco del vault de cliente: `validate --all` 300 válidas + **1 aviso** (la decisión del bloque legal `extiende` el insight superado), `search` **292 + 8 ocultas = 300** — las 8 son 3 `superada` + 5 `reemplazada` según `board` — y `traverse` desde el insight superado arranca en su vigente.
+- Scope por campo: fail-closed sin datos (**0** notas), scope por ruta intacto (**4**), mal formado aborta con **exit 1**, y `read`/`traverse`/`board`/`stale` no ven nada fuera del scope.
+- **Efecto en este vault (no medido por los PR):** `OKF-Vault` oculta **6** notas reemplazadas en `search` y `validate` suma **2 avisos** (un Plan y un Research apoyados en decisiones reemplazadas). `health` sigue 9/9.
 
 ---
 ## [2026-10-19] — v0.4.28
