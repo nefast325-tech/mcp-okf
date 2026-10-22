@@ -847,6 +847,14 @@ def _cmd_suggest_edge_types(vault, graph, apply=False, dry_run=False,
                 source_type, target_type, definitions=definitions
             )
 
+            # Si la arista inversa (target → source) ya está tipada, este
+            # wikilink es la referencia de vuelta: tiparlo también crea un
+            # ciclo (A refina B y B refina A). No es una sugerencia segura.
+            reverse_typed = source_path in {
+                tl.get("target")
+                for tl in graph.get(target_path, {}).get("typed_out", [])
+            }
+
             # Cyber override: si source tiene cyber.corrects → target,
             # sugiere 'refina' (corrige/mejora sin reemplazar).
             # 'corrige' se reserva para cuando el target está explícitamente
@@ -910,12 +918,28 @@ def _cmd_suggest_edge_types(vault, graph, apply=False, dry_run=False,
                 definitions=definitions,
             )
 
+            if reverse_typed:
+                confidence = "BAJA"
+
             suggestions[confidence].append({
                 "source": source_path,
                 "target": target_path,
                 "suggested_type": suggested_type,
                 "score": edge_score,
+                "conflicto": reverse_typed,
             })
+
+    # Un par sugerido ALTA en las dos direcciones se contradice: todos los
+    # tipos son direccionales. Ninguna de las dos es segura de aplicar.
+    alta_pairs = {(it["source"], it["target"]) for it in suggestions["ALTA"]}
+    mutual = [
+        it for it in suggestions["ALTA"]
+        if (it["target"], it["source"]) in alta_pairs
+    ]
+    for it in mutual:
+        it["conflicto"] = True
+        suggestions["ALTA"].remove(it)
+        suggestions["MEDIA"].append(it)
 
     # --- Output ---
     lines = []
@@ -947,7 +971,10 @@ def _cmd_suggest_edge_types(vault, graph, apply=False, dry_run=False,
             all_sug = (
                 suggestions["ALTA"] + suggestions["MEDIA"] + suggestions["BAJA"]
             )
-            candidates = [it for it in all_sug if it["score"] >= min_score]
+            candidates = [
+                it for it in all_sug
+                if it["score"] >= min_score and not it.get("conflicto")
+            ]
             skipped_score = len(all_sug) - len(candidates)
         else:
             candidates = suggestions["ALTA"]

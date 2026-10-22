@@ -5,6 +5,9 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
+### Corregido
+- **`graph suggest-edge-types` proponía como ALTA aristas que cierran un ciclo.** Si `A → B` ya estaba tipada, el wikilink de vuelta `B → A` salía ALTA con un tipo direccional (`B refina A` junto a `A refina B`), y un par mencionado en las dos direcciones salía ALTA en ambas. Medido el 22-oct-2026 en un vault de 311 notas: de 391 ALTA, 68 eran la inversa de una arista tipada y 52 formaban 26 pares mutuos. Ahora la inversa de una arista tipada baja a BAJA y los pares mutuos a MEDIA, y ninguna de las dos entra en `--apply` (tampoco con `--min-score`). En ese vault, ALTA pasa de 391 a 271. Tests: +4 (`tests/test_suggest_sin_aristas_inversas.py`, con un control que conserva su ALTA).
+
 ---
 ## [2026-10-22] — v0.4.30
 
