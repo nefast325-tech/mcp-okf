@@ -33,13 +33,21 @@ def get_today_str():
     return (datetime.now(timezone.utc) - timedelta(hours=5)).strftime("%Y-%m-%d")
 
 
-def collect_due(vault):
+def collect_due(vault, config=None, skipped=None):
     """Finds concepts with cyber.review_on <= today.
 
     Cada ítem trae ``vencido`` (``review_on < hoy``): la lista incluye los que
     vencen hoy porque son tareas de hoy, pero ``vencido`` los distingue para
     quien necesite contar loops realmente rotos (dashboard, health).
+
+    Los conceptos muertos (``cli.states.is_dead_status``: reemplazada,
+    obsoleta, descartada, cancelada, deprecada…) se omiten: un concepto que
+    completó apoptosis no tiene loop abierto, y su ``review_on`` vencido no es
+    una tarea. Si se pasa ``skipped`` (lista), se anexan ahí para poder
+    informarlos — mismo criterio que el protocolo de apoptosis.
     """
+    from cli.states import is_dead_status
+
     today = get_today_str()
     due = []
 
@@ -64,6 +72,12 @@ def collect_due(vault):
 
         review_str = str(review_on)
         if review_str <= today:
+            ctype = str(fm.get("type", ""))
+            if is_dead_status(config, ctype, fm.get("status")):
+                if skipped is not None:
+                    skipped.append({"file": rel, "type": ctype,
+                                    "status": str(fm.get("status", ""))})
+                continue
             outcome = str(cyber.get("outcome", ""))
             sensor = str(cyber.get("sensor", "?"))
             metric = cyber.get("target_metric", {})
@@ -76,7 +90,7 @@ def collect_due(vault):
 
             due.append({
                 "file": rel,
-                "type": str(fm.get("type", "")),
+                "type": ctype,
                 "title": str(fm.get("title", rel)),
                 "severity": severity,
                 "outcome": outcome if outcome not in ("", "None") else "(unmeasured)",
@@ -136,12 +150,21 @@ def _marca_hoy(item):
     return "" if item.get("vencido") else "  ⏰ vence hoy"
 
 
+def _linea_omitidos(skipped):
+    """Línea informativa de conceptos muertos omitidos (apoptosis)."""
+    if not skipped:
+        return None
+    slugs = ", ".join(s["file"].replace(".md", "") for s in skipped)
+    return f"({len(skipped)} concepto(s) muerto(s) omitido(s): {slugs})"
+
+
 def run(args, vault, config=None):
     """Runs the cybernetic review."""
     json_out = getattr(args, "json", False)
     count_only = getattr(args, "count", False)
 
-    due = collect_due(vault)
+    skipped_dead = []
+    due = collect_due(vault, config=config, skipped=skipped_dead)
     for d in due:
         d.setdefault("kind", "cyber")
     verification = collect_verification_due(vault, config=config)
@@ -158,6 +181,9 @@ def run(args, vault, config=None):
     else:
         if not due and not verification:
             print("✅ Nothing pending review.")
+            linea = _linea_omitidos(skipped_dead)
+            if linea:
+                print(linea)
         else:
             required = [d for d in due if d["severity"] == "required"]
             verify = [d for d in due if d["severity"] == "verify"]
@@ -193,5 +219,8 @@ def run(args, vault, config=None):
                     print("")
 
             print(f"─\n{len(due) + len(verification)} concept(s) need attention.")
+            linea = _linea_omitidos(skipped_dead)
+            if linea:
+                print(linea)
 
     return 1 if (due or verification) else 0

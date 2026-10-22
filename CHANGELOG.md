@@ -6,6 +6,19 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ## [Unreleased]
 
 ---
+## [2026-10-22] — v0.4.30
+
+El sensor de review contaba conceptos muertos como tareas pendientes: escaneaba `cyber.review_on` sin mirar `status`, así que un concepto que completó apoptosis aparecía vencido para siempre y `health`/el dashboard lo contaban como loop roto. Los dos únicos vencidos del vault OKF el 2026-10-22 eran una Decision `reemplazada` (dashboard.md) y un Plan `cancelada` (migración a A2A) — 100% falsos positivos.
+
+### Estados muertos (`types.states.schemas.*.dead`)
+
+- **`dead` en el esquema de estados** (cli/states.py): cada capa declara qué estados significan «este concepto ya no vive». `dead_states()` devuelve ese conjunto más el `replaced` de la capa; `is_dead_status()` responde por concepto. Sin esquema se mantiene la heurística histórica por subcadena (`deprec`, `superced`, `superad`, `obsolet`, `cancel`, `descart`, `rechaz`, `reemplaz`). `done`/`hecha` **no** son muerte: una nota terminada conserva su métrica re-verificable.
+- **`review` filtra muertos** (cli/commands/review.py): `collect_due(vault, config=None, skipped=None)` omite los conceptos muertos y, si el llamador pasa `skipped`, los anexa; la salida humana cierra con una línea `(N concepto(s) muerto(s) omitido(s): …)`. `run()` propaga `config`, así que el mismo criterio aplica al CLI y al MCP, y el exit code deja de ser 1 por notas muertas.
+- **El dashboard hereda el filtro** (cli/commands/dashboard_snapshot.py): `_cibernetica_section(vault, config=None)` pasa `config` a `collect_due` y no cuenta `review_on_vencidos`/`_nodes`/`proximos_7d` de un concepto muerto. Los outcomes (`loops_abiertos`/`loops_cerrados`) sí lo incluyen: al morir el concepto su loop cerró, el bloque queda como registro histórico.
+- Tests: `tests/test_review_conceptos_muertos.py` (+12): `dead_states` con `replaced` incluido, `hecha` no es muerte, heurística sin esquema, Decision `reemplazada` / Plan `cancelada` omitidos, `aceptada` sigue siendo tarea, mezcla vivos/muertos, `skipped`, `review` sin pendientes con exit 0 más la línea de omitidos, y `review_on_vencidos_nodes` sin el muerto. Suite: **535**.
+- Medido en el vault OKF (2026-10-22): antes `review` → 2 vencidos, exit 1; después → `✅ Nothing pending review` con los 2 muertos listados aparte, exit 0.
+
+---
 ## [2026-10-21] — v0.4.29
 
 Las fases 4 y 5 del rediseño del vault de cliente, en una etiqueta: la verdad tiene fecha y quien decide es una nota (#39), y cada nota dice a qué iniciativa pertenece con el alcance de una instancia del MCP por campo (#40). Las dos son opt-in por vault.

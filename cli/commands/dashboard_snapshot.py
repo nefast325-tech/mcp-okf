@@ -427,7 +427,7 @@ def _graph_section(vault):
     }
 
 
-def _cibernetica_section(vault):
+def _cibernetica_section(vault, config=None):
     """Loops cibernéticos: bloques cyber, outcomes y review_on.
 
     review_on_vencidos cuenta SOLO los reviews ya vencidos (review_on < hoy):
@@ -435,7 +435,8 @@ def _cibernetica_section(vault):
     health (loop roto) y que conceptos[].cyber.vencido. Un review que vence
     hoy no está roto: sigue en la lista de review y se cuenta aparte en
     review_on_hoy. loops_abiertos = outcome pendiente o sin medir;
-    loops_cerrados = outcome success/failure.
+    loops_cerrados = outcome success/failure. Los conceptos muertos
+    (reemplazada/obsoleta/cancelada/deprecada) no se cuentan: no tienen loop.
 
     Las listas ``*_nodes`` acompañan a cada contador con los nodos que lo
     componen, para que la capa Cyber del plugin coloree el grafo
@@ -444,7 +445,8 @@ def _cibernetica_section(vault):
     plugin: si faltan, la capa queda vacía sin romper nada.
     """
     from cli.commands.review import collect_due
-    due = collect_due(vault)
+    due = collect_due(vault, config=config)
+    from cli.states import is_dead_status
     vencidos = sum(1 for d in due if d["vencido"])
     hoy = sum(1 for d in due if not d["vencido"])
 
@@ -487,6 +489,11 @@ def _cibernetica_section(vault):
             outcome_failure += 1
             outcome_failure_nodes.append(slug)
         review_on = str(cyber.get("review_on", "") or "")
+        # Un concepto muerto (apoptosis) no tiene review pendiente: su bloque
+        # cyber queda como registro histórico, pero su review_on no es tarea.
+        # Los outcomes sí se cuentan (el loop cerró al morir el concepto).
+        if is_dead_status(config, str(fm.get("type", "")), fm.get("status")):
+            continue
         if review_on and today < review_on <= limite:
             proximos_7d += 1
         # Mismo criterio que el agregado: vencido = review_on < hoy, sin
@@ -682,7 +689,7 @@ def _build_snapshot(vault, config=None, db_path=None, source="manual",
 
     health = _health_section(vault, config)
     graph = _graph_section(vault)
-    cibernetica = _cibernetica_section(vault)
+    cibernetica = _cibernetica_section(vault, config)
     stale_results = _collect_stale_results(vault, config)
     dist = _stale_distribution(stale_results)
     conceptos = _conceptos_section(vault, stale_results)

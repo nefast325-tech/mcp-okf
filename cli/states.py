@@ -26,6 +26,7 @@ Forma del esquema (agrupado por capa para no repetir cinco veces lo mismo):
               superada: [en-revision]
             replaced: superada
             pending: [en-revision]
+            dead: [superada, obsoleta]
           registro:
             types: [Session, Persona]
             states: []           # sin ciclo: no llevan status
@@ -56,6 +57,7 @@ def schema_for(config, concept_type):
                 "replaced": schema.get("replaced"),
                 "pending": [str(s) for s in (schema.get("pending") or [])],
                 "done": [str(s) for s in (schema.get("done") or [])],
+                "dead": [str(s) for s in (schema.get("dead") or [])],
             }
     return None
 
@@ -167,6 +169,47 @@ def is_replaced_status(config, concept_type, status):
         replaced = schema["replaced"]
         return bool(replaced) and value == str(replaced).lower()
     return any(marker in value for marker in _LEGACY_REPLACED_MARKERS)
+
+
+_LEGACY_DEAD_MARKERS = ("deprec", "superced", "superad", "obsolet",
+                        "cancel", "descart", "rechaz", "reemplaz")
+
+
+def dead_states(config, concept_type):
+    """Estados que significan «este concepto ya no vive».
+
+    Un concepto muerto (reemplazado, obsoleto, descartado, cancelado,
+    deprecado) no tiene loop cibernético abierto: su `cyber.review_on` no es
+    una tarea pendiente. Con esquema: `dead` + `replaced` de la capa. El
+    conjunto NO incluye `done` (una nota terminada sigue viva: su métrica se
+    puede re-verificar).
+
+    Returns:
+        set[str]: estados muertos en minúsculas; vacío sin esquema.
+    """
+    schema = schema_for(config, concept_type)
+    if schema is None:
+        return set()
+    dead = {s.strip().lower() for s in schema["dead"] if s.strip()}
+    if schema["replaced"]:
+        dead.add(str(schema["replaced"]).strip().lower())
+    return dead
+
+
+def is_dead_status(config, concept_type, status):
+    """True si `status` marca el concepto como muerto (apoptosis).
+
+    Con esquema: pertenencia a `dead_states`. Sin esquema: heurística por
+    subcadena sobre los marcadores históricos, para no cambiar el
+    comportamiento de vaults que no declaran estados.
+    """
+    value = str(status).strip().lower() if status is not None else ""
+    if not value:
+        return False
+    schema = schema_for(config, concept_type)
+    if schema is not None:
+        return value in dead_states(config, concept_type)
+    return any(marker in value for marker in _LEGACY_DEAD_MARKERS)
 
 
 def pending_states(config, concept_type):
