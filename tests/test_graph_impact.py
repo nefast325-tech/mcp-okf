@@ -83,3 +83,46 @@ class GraphImpactTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GraphImpactNivelPorAristaTests(unittest.TestCase):
+    """La arista declarada manda; el score semántico anota, no degrada.
+
+    Caso real (controlresearch-vault, 31-oct-2026): tres decisiones aceptadas
+    que `extiende`n una decisión reemplazada caían en «informativo» porque su
+    score de tags/descripción era 0.65, y `graph impact` sobre la reemplazada
+    no las mostraba como algo a revisar.
+    """
+
+    def test_extiende_declarada_con_score_bajo_es_considerar_revision(self):
+        g = _graph(typed_in=[
+            {"target": "insights/otro.md", "type": "extiende", "score": 0.25},
+        ])
+        out = _cmd_impact(g, "decisions/base.md")
+        self.assertIn("🟡", out)
+        self.assertNotIn("🔵", out)
+        self.assertIn("ajuste: 0.25", out)
+        self.assertIn("bajo", out)
+
+    def test_aplica_y_depende_declaradas_son_revision_obligatoria(self):
+        g = _graph(typed_in=[
+            {"target": "insights/otro.md", "type": "aplica", "score": 0.3},
+        ])
+        out = _cmd_impact(g, "decisions/base.md")
+        self.assertIn("🔴", out)
+        g = _graph(typed_in=[
+            {"target": "insights/otro.md", "type": "depende", "score": 0.1},
+        ])
+        self.assertIn("🔴", _cmd_impact(g, "decisions/base.md"))
+
+    def test_fundamenta_saliente_es_revision_obligatoria(self):
+        g = _graph(typed_out=[
+            {"target": "insights/otro.md", "type": "fundamenta", "score": 0.2},
+        ])
+        self.assertIn("🔴", _cmd_impact(g, "decisions/base.md"))
+
+    def test_sin_score_no_anota_ajuste(self):
+        g = _graph(typed_in=[{"target": "insights/otro.md", "type": "refina"}])
+        out = _cmd_impact(g, "decisions/base.md")
+        self.assertIn("🔵", out)
+        self.assertNotIn("ajuste", out)

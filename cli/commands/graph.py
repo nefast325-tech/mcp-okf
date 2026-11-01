@@ -586,98 +586,48 @@ def _cmd_impact(graph, filename, vault=None):
 
     data = graph[resolved]
 
-    # Categorizar impactos por score de arista
-    blocking = []   # 🔴 score ≥ 0.7 — revisión obligatoria
-    warning = []    # 🟡 score 0.4–0.69 — considerar revisión
-    info = []       # 🔵 score < 0.4 — revisar si aplica
+    # Categorizar impactos por el TIPO de arista declarada. La arista la
+    # declaró quien escribió la nota: es un hecho del grafo, no una hipótesis.
+    # El score semántico (ajuste de tags y descripción, cli/edge_types.py)
+    # anota cuán parecidas son las dos notas, pero no degrada el impacto: una
+    # `extiende` declarada con ajuste 0.25 sigue siendo una extensión. Antes
+    # el score decidía el nivel y tres decisiones que extendían una
+    # reemplazada caían en «informativo» por tener pocos tags en común.
+    blocking = []   # 🔴 depende, aplica, fundamenta — revisión obligatoria
+    warning = []    # 🟡 extiende — considerar revisión
+    info = []       # 🔵 refina, corrige — revisar si aplica
 
-    # X depende B → typed_in con type=depende
+    def _nota(entry):
+        """Anotación del ajuste semántico; avisa si es bajo."""
+        score = entry.get("score")
+        if score is None:
+            return ""
+        if score < 0.4:
+            return f" [ajuste: {score} — bajo: revisá que la arista sea la correcta]"
+        return f" [ajuste: {score}]"
+
+    # Nivel por tipo de arista, en la dirección del impacto:
+    # X depende/aplica/extiende/refina/corrige B → typed_in; B fundamenta X → typed_out.
+    NIVEL_IN = {
+        "depende": (blocking, "{src} depende de este nodo"),
+        "aplica": (blocking, "{src} aplica este nodo"),
+        "extiende": (warning, "{src} extiende este nodo"),
+        "refina": (info, "{src} refina este nodo"),
+        "corrige": (info, "{src} corrects this node — is the correction still valid?"),
+    }
     for entry in data.get("typed_in", []):
-        source = entry["target"]
-        etype = entry["type"]
-        if etype != "depende":
+        nivel = NIVEL_IN.get(entry["type"])
+        if nivel is None:
             continue
-        raw_score = entry.get("score", 0.5)  # default 0.5 si no hay score (retrocompat)
-        reason = f"{source} depende de este nodo"
-        if raw_score >= 0.7:
-            blocking.append((source, f"{reason} [score: {raw_score}]"))
-        elif raw_score >= 0.4:
-            warning.append((source, f"{reason} [score: {raw_score}]"))
-        else:
-            info.append((source, f"{reason} [score: {raw_score}]"))
-
-    # X aplica B → typed_in con type=aplica
-    for entry in data.get("typed_in", []):
+        bucket, plantilla = nivel
         source = entry["target"]
-        etype = entry["type"]
-        if etype != "aplica":
-            continue
-        raw_score = entry.get("score", 0.5)
-        reason = f"{source} aplica este nodo"
-        if raw_score >= 0.7:
-            blocking.append((source, f"{reason} [score: {raw_score}]"))
-        elif raw_score >= 0.4:
-            warning.append((source, f"{reason} [score: {raw_score}]"))
-        else:
-            info.append((source, f"{reason} [score: {raw_score}]"))
+        bucket.append((source, plantilla.format(src=source) + _nota(entry)))
 
-    # X extiende B → typed_in con type=extiende
-    for entry in data.get("typed_in", []):
-        source = entry["target"]
-        etype = entry["type"]
-        if etype != "extiende":
-            continue
-        raw_score = entry.get("score", 0.5)
-        reason = f"{source} extiende este nodo"
-        if raw_score >= 0.7:
-            warning.append((source, f"{reason} [score: {raw_score}]"))
-        elif raw_score >= 0.4:
-            info.append((source, f"{reason} [score: {raw_score}]"))
-        else:
-            info.append((source, f"{reason} (bajo score: {raw_score})"))
-
-    # X refina B → typed_in con type=refina
-    for entry in data.get("typed_in", []):
-        source = entry["target"]
-        etype = entry["type"]
-        if etype != "refina":
-            continue
-        raw_score = entry.get("score", 0.5)
-        reason = f"{source} refina este nodo"
-        if raw_score >= 0.7:
-            warning.append((source, f"{reason} [score: {raw_score}]"))
-        elif raw_score >= 0.4:
-            info.append((source, f"{reason} [score: {raw_score}]"))
-        else:
-            info.append((source, f"{reason} (bajo score: {raw_score})"))
-
-    # X corrige B → typed_in con type=corrige
-    for entry in data.get("typed_in", []):
-        source = entry["target"]
-        etype = entry["type"]
-        if etype != "corrige":
-            continue
-        raw_score = entry.get("score", 0.5)
-        reason = f"{source} corrects this node — is the correction still valid?"
-        if raw_score >= 0.7:
-            info.append((source, f"{reason} [score: {raw_score}]"))
-        else:
-            info.append((source, f"{reason} (bajo score: {raw_score})"))
-
-    # B fundamenta X → typed_out con type=fundamenta
     for entry in data.get("typed_out", []):
-        target = entry["target"]
-        etype = entry["type"]
-        if etype != "fundamenta":
+        if entry["type"] != "fundamenta":
             continue
-        raw_score = entry.get("score", 0.5)
-        reason = f"este nodo fundamenta a {target}"
-        if raw_score >= 0.7:
-            blocking.append((target, f"{reason} [score: {raw_score}]"))
-        elif raw_score >= 0.4:
-            warning.append((target, f"{reason} [score: {raw_score}]"))
-        else:
-            info.append((target, f"{reason} [score: {raw_score}]"))
+        target = entry["target"]
+        blocking.append((target, f"este nodo fundamenta a {target}" + _nota(entry)))
 
     if not blocking and not warning and not info:
         return f"📋 {resolved}: no typed edges indicating impact. No one depends ontologically on this node."
