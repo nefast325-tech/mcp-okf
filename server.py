@@ -642,8 +642,15 @@ def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: 
 
 
 @_mcp_tool()
-def search(query: str = "", type: str = "", status: str = "", cyber_field: str = "", cyber_value: str = "", todos: bool = False, json_output: bool = False, since: str = "", until: str = "", with_graph: bool = False, all_versions: bool = False) -> str:
-    """FTS5 search in the OKF vault + pending tasks list (todos=true). FALLBACK — prefer traverse or index reads.
+def search(query: str = "", type: str = "", status: str = "", cyber_field: str = "", cyber_value: str = "", todos: bool = False, json_output: bool = False, since: str = "", until: str = "", with_graph: bool = False, all_versions: bool = False, body: bool = False) -> str:
+    """Substring search (AND over tokens, case-insensitive) in the OKF vault + pending tasks list (todos=true). FALLBACK — prefer traverse or index reads.
+
+    NOT full-text (no FTS5): each token of `query` must appear in the title,
+    description or tags of the note. With body=True each token may also match
+    the note body; body-only matches come after frontmatter matches, marked
+    "(cuerpo)" in the table (field match="frontmatter"|"body" in JSON).
+    Without body=True, when fewer than 5 notes match, a footer says how many
+    more mention the query only in their body.
 
     Use only when:
     - Traversal doesn't find a path in ≤6 hops
@@ -663,10 +670,13 @@ def search(query: str = "", type: str = "", status: str = "", cyber_field: str =
         since: Filter by timestamp >= date (ISO 8601, inclusive, e.g. "2026-07-20")
         until: Filter by timestamp <= date (ISO 8601, inclusive)
         with_graph: If True, includes ## Detected relationships section with typed edges between results
+        body: If True, also matches each token against the note body (after the frontmatter)
     """
     args = ["search"]
     if query:
         args += ["--query", query]
+    if body:
+        args.append("--body")
     if type:
         args += ["--type", type]
     if status:
@@ -691,7 +701,7 @@ def search(query: str = "", type: str = "", status: str = "", cyber_field: str =
         "query": query, "type": type, "status": status,
         "cyber_field": cyber_field, "cyber_value": cyber_value,
         "todos": todos, "json_output": json_output,
-        "since": since, "until": until,
+        "since": since, "until": until, "body": body,
     })
 
 
