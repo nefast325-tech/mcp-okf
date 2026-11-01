@@ -392,7 +392,7 @@ def _check_edge_type_consistency(filepath, vault, definitions=None, config=None,
     """
     from cli.edge_types import VALID_EDGE_TYPES, validate_cross_type_pair, score_edge
     from cli.frontmatter import parse_frontmatter
-    from cli.states import is_replaced_status, schema_for, states_strict
+    from cli.states import is_dead_status, is_replaced_status, schema_for, states_strict
     from cli.vigente import SUPPORT_EDGES
 
     strict_pairs = bool(getattr(config, "graph_strict_pairs", False)) if config else False
@@ -432,12 +432,22 @@ def _check_edge_type_consistency(filepath, vault, definitions=None, config=None,
             types_per_target[target] = set()
         types_per_target[target].add(edge_type)
 
-        if edge_type in SUPPORT_EDGES and schema_for(config, src_type) is not None \
-                and not is_replaced_status(config, src_type, fm.get("status")):
+        src_status = fm.get("status")
+        src_viva = (schema_for(config, src_type) is not None
+                    and not is_replaced_status(config, src_type, src_status)
+                    and not is_dead_status(config, src_type, src_status))
+        if src_viva and edge_type in SUPPORT_EDGES + ("aplica",):
             # Fase 4: una nota vigente que se apoya (extiende, fundamenta,
             # depende) en una ya reemplazada sigue una verdad vieja. Aviso
             # siempre, nunca error: la cadena de corrige dice cuál es la
             # vigente, y mover la arista es decisión de quien edita.
+            # Dos casos más que antes pasaban en silencio:
+            # - `aplica` hacia una reemplazada: el trabajo suele seguir
+            #   valiendo (la decisión se corrigió en un detalle); el aviso
+            #   pide re-anclar la arista, no revisar el trabajo.
+            # - apoyo en una nota muerta sin sucesora (un plan `cancelada`,
+            #   según `dead` de su capa): no hay vigente a la que saltar; lo
+            #   que se apoya ahí quedó sin base.
             target_file = _resolve_edge_target(vault, target, filepath.parent, name_index)
             if target_file is not None:
                 try:
@@ -446,12 +456,27 @@ def _check_edge_type_consistency(filepath, vault, definitions=None, config=None,
                     t_fm = None
                 if t_fm:
                     t_type = str(t_fm.get("type", ""))
-                    if schema_for(config, t_type) is not None and is_replaced_status(
-                            config, t_type, t_fm.get("status")):
+                    t_status = t_fm.get("status")
+                    if schema_for(config, t_type) is None:
+                        pass
+                    elif is_replaced_status(config, t_type, t_status):
+                        if edge_type == "aplica":
+                            warnings.append(
+                                f"  links: {rel} 'aplica' → '{target}', que está en "
+                                f"'{t_status}' (reemplazada): re-anclá la arista en su "
+                                f"versión vigente (la que la 'corrige'); el trabajo "
+                                f"puede seguir valiendo")
+                        else:
+                            warnings.append(
+                                f"  links: {rel} '{edge_type}' → '{target}', que está en "
+                                f"'{t_status}' (reemplazada): apoyate en su versión "
+                                f"vigente (la que la 'corrige')")
+                    elif edge_type in SUPPORT_EDGES and is_dead_status(
+                            config, t_type, t_status):
                         warnings.append(
                             f"  links: {rel} '{edge_type}' → '{target}', que está en "
-                            f"'{t_fm.get('status')}' (reemplazada): apoyate en su versión "
-                            f"vigente (la que la 'corrige')")
+                            f"'{t_status}' (muerta, sin sucesora): lo que se apoya ahí "
+                            f"quedó sin base; re-anclalo o cerralo")
 
         if edge_type == "corrige":
             target_file = _resolve_edge_target(vault, target, filepath.parent, name_index)
