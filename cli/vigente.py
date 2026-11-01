@@ -78,3 +78,51 @@ def build_superseded_map(vault, graph, config=None, fm_cache=None):
 def current_version(rel, superseded_map):
     """La vigente de `rel`, o `rel` mismo si no está reemplazada."""
     return superseded_map.get(rel, rel)
+
+
+def slug_of(rel):
+    """`decisions/x.md` → `decisions/x`: lo que el agente pasa a `read`.
+
+    Se usa en lo que `read` y `search` imprimen a stdout porque el trazador
+    del server toma cualquier token terminado en `.md` como nodo resultado.
+    """
+    rel = str(rel)
+    return rel[:-3] if rel.endswith(".md") else rel
+
+
+def resolve_note(vault, rel, config, graph=None):
+    """Vigencia de UNA nota, para que `read` la anuncie antes del cuerpo.
+
+    Devuelve {"replaced", "status", "current", "current_title", "corrects"}:
+    si la nota está en su estado de reemplazo, `current` es su vigente (o
+    None si nadie la `corrige`); `corrects` son las notas que esta corrige.
+
+    El grafo entero solo se construye cuando hace falta (la nota está
+    reemplazada o declara `corrige`): una nota vigente común no paga nada.
+    """
+    rel = str(rel)
+    fm = _frontmatter(vault, rel)
+    ctype = str(fm.get("type", ""))
+    status = str(fm.get("status") or "")
+    info = {"replaced": False, "status": status, "current": None,
+            "current_title": "", "corrects": []}
+    if config is None or not getattr(config, "states_schemas", None):
+        return info
+    info["replaced"] = (schema_for(config, ctype) is not None
+                        and is_replaced_status(config, ctype, status))
+    links = fm.get("links") if isinstance(fm.get("links"), list) else []
+    declares_corrige = any(isinstance(l, dict) and l.get("type") == "corrige" for l in links)
+    if not info["replaced"] and not declares_corrige:
+        return info
+    if graph is None:
+        from cli.commands.graph import build_graph  # import tardío: evita ciclo
+        graph = build_graph(vault)
+    node = graph.get(rel, {})
+    info["corrects"] = [e["target"] for e in node.get("typed_out", [])
+                        if e.get("type") == "corrige"]
+    if info["replaced"]:
+        current = build_superseded_map(vault, graph, config).get(rel)
+        if current:
+            info["current"] = current
+            info["current_title"] = str(_frontmatter(vault, current).get("title", ""))
+    return info

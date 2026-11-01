@@ -659,6 +659,10 @@ def search(query: str = "", type: str = "", status: str = "", cyber_field: str =
       or set todos=true here
     - You need to filter by date range (--since, --until)
 
+    Superseded notes (status reemplazada/superada) are hidden; if any of them
+    matches the query, a footer lists each one with its current version
+    («<old> → vigente <new>») so you can read the current one instead.
+
     Args:
         query: Search term (optional if using --todos or --type)
         type: Filter by type (Decision, Plan, Project, Insight, etc.)
@@ -736,6 +740,8 @@ def read(slug: str, offset: int = 1, limit: int = 500, no_touch: bool = False) -
 
     Use to read the full body of a concept after traverse
     confirms its relevance. NEVER use system read_file on vault .md files.
+    If the concept is superseded, the first line says so and names its
+    current version («♻️ … Versión vigente: <slug>»): read that one.
 
     Args:
         slug: Concept slug (e.g.: 'decisions/mcp-okf-cli-como-correccion-de-sesgo-de-toolset')
