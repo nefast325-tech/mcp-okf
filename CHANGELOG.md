@@ -5,8 +5,33 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
-### Corregido
-- **`graph suggest-edge-types` proponía como ALTA aristas que cierran un ciclo.** Si `A → B` ya estaba tipada, el wikilink de vuelta `B → A` salía ALTA con un tipo direccional (`B refina A` junto a `A refina B`), y un par mencionado en las dos direcciones salía ALTA en ambas. Medido el 22-oct-2026 en un vault de 311 notas: de 391 ALTA, 68 eran la inversa de una arista tipada y 52 formaban 26 pares mutuos. Ahora la inversa de una arista tipada baja a BAJA y los pares mutuos a MEDIA, y ninguna de las dos entra en `--apply` (tampoco con `--min-score`). En ese vault, ALTA pasa de 391 a 271. Tests: +4 (`tests/test_suggest_sin_aristas_inversas.py`, con un control que conserva su ALTA).
+---
+## [2026-11-01] — v0.4.32
+
+Seis PRs de Medardo (#41–#46), verificados uno por uno con su suite y con smoke E2E sobre `controlresearch-vault`. La tanda tiene una idea común: **el agente dejaba de ver tres cosas que el vault sí sabía** — que una nota está reemplazada, cuánto cuesta una respuesta, y que una búsqueda devolvía 3 de 10. Suite: **583**.
+
+### Búsqueda y vigencia (`search`, `read` — #43, #46)
+
+- **`search --body`** (`cli/commands/search.py`, `cli/main.py`, `server.py`): la docstring decía «FTS5» y no lo era — es substring AND sobre título, descripción y tags, sin leer el cuerpo. Ahora `--body` busca también en el cuerpo; los aciertos por frontmatter van primero y los de cuerpo después, marcados `(cuerpo)` en la tabla y `match: "body"` en JSON. Sin `--body` y con menos de 5 resultados, un pie avisa cuántas notas más mencionan la consulta en el cuerpo. `find_concepts` conserva el cuerpo en minúsculas (`_body`) en la misma lectura: no hay segunda pasada.
+- **`read` anuncia la vigente** (`cli/vigente.py`, `cli/commands/read.py`): leer una nota reemplazada imprime antes del cuerpo `♻️ … Versión vigente: <slug> — <título>`; la correctora imprime `↩️ Corrige a: …`. El grafo solo se construye si la nota está reemplazada o declara `corrige`.
+- **El pie de reemplazadas deja de ser global** (`search`): decía «6 superseded note(s) hidden» siempre, incluso sin resultados, porque contaba el vault entero. Ahora cuenta solo las reemplazadas que coinciden con la consulta y el tipo, cada una con su vigente (`vieja → vigente nueva`). Con `--json` no cambia nada.
+- **Conflicto #43/#46 resuelto**: los dos reescribían el pie de `search`. Conviven los dos pies y `hidden` se filtra con `matches_query(..., body=body_mode)`, para que con `--body` cuente también la reemplazada que coincide solo en su cuerpo.
+
+### Costo de una llamada (`traverse` — #45)
+
+- **`--compact`**: una línea por nodo (ruta, tipo, estado, descripción recortada a 80 y la arista por la que se llegó). El BFS, el orden y las anotaciones no cambian. En un vault de 131 notas con depth 2: 21.531 → 10.277 bytes.
+- **`--budget N`**: corta a N nodos **después** del BFS completo, así «alcanzables» es exacto y el recibo dice cuántos quedaron fuera. `--budget 0` o negativo es error.
+- **Recibo en toda salida**: `📎 recibo: <n> nodos de <alcanzables> · depth d · <bytes> bytes ≈ <tokens> tokens · truncado: sí/no`, y clave `receipt` en JSON. Los bytes son los de la salida que precede al recibo; tokens = bytes // 4.
+
+### Grafo (`graph` — #41, #42)
+
+- **`suggest-edge-types` no propone ciclos** (#41): si la arista inversa ya está tipada, la sugerencia baja a BAJA; un par que sale ALTA en las dos direcciones baja a MEDIA. Ninguna de las dos entra en `--apply`, tampoco con `--min-score`. Medido en un vault de 311 notas: ALTA 391 → 271.
+- **`graph impact` manda por la arista declarada** (#42): el nivel ya no lo decide el score semántico. 🔴 `depende`/`aplica` entrantes y `fundamenta` saliente; 🟡 `extiende`; 🔵 `refina`/`corrige`. El score solo anota (`[ajuste: 0.65]`) y, si es menor a 0.4, avisa que la arista puede estar mal puesta. Sobre la decisión reemplazada del CRM: 🔴 0 → 2, 🟡 2 → 5, 🔵 6 → 1.
+
+### Validación (`validate` — #44)
+
+- **`aplica` hacia una reemplazada avisa** con mensaje propio («re-anclá la arista en su versión vigente; el trabajo puede seguir valiendo»), distinto del aviso de apoyo, porque el trabajo no necesariamente muere.
+- **Apoyo en una nota muerta sin sucesora avisa** («quedó sin base; re-anclalo o cerralo») para los estados que la capa declara en `dead` (un plan `cancelada`). Requiere `dead` en el esquema; sin eso el comportamiento no cambia. Una fuente muerta o reemplazada no avisa: es historia. Siempre aviso, nunca error — `health --strict` no cambia.
 
 ---
 ## [2026-10-23] — v0.4.31
