@@ -233,8 +233,21 @@ def _sanitize_cyber(cyber):
     return result
 
 
+def _body_after_frontmatter(text, fm_text):
+    """Devuelve el cuerpo del archivo: lo que sigue al `---` de cierre."""
+    resto = text[3 + len(fm_text):]
+    partes = resto.split("\n", 2)  # "", "---", cuerpo
+    return partes[2] if len(partes) == 3 else ""
+
+
 def find_concepts(vault):
-    """Finds all concepts with frontmatter in the vault."""
+    """Finds all concepts with frontmatter in the vault.
+
+    El cuerpo (texto tras el frontmatter) se conserva en `_body`, en
+    minúsculas, para que la búsqueda por cuerpo reutilice esta misma lectura
+    en vez de abrir cada archivo dos veces. Es una clave privada: `run` la
+    quita antes de imprimir.
+    """
     concepts = []
     for md_file in find_md_files(vault):
         try:
@@ -242,7 +255,7 @@ def find_concepts(vault):
         except Exception:
             continue
 
-        fm, _ = parse_frontmatter(text)
+        fm, fm_text = parse_frontmatter(text)
         if not fm:
             continue
 
@@ -263,13 +276,18 @@ def find_concepts(vault):
             "resource": str(fm.get("resource", "")),
             "timestamp": str(fm.get("timestamp", "")),
             "cyber": _sanitize_cyber(fm.get("cyber")),
+            "_body": _body_after_frontmatter(text, fm_text).lower(),
         })
 
     return concepts
 
 
-def matches_query(concept, query):
-    """Checks if a concept matches the query (AND, case-insensitive)."""
+def matches_query(concept, query, body=False):
+    """Checks if a concept matches the query (AND, case-insensitive).
+
+    Es substring sobre título, descripción y tags; con body=True cada token
+    puede coincidir también en el cuerpo del archivo (`_body`).
+    """
     tokens = query.lower().split()
     if not tokens:
         return True
@@ -279,6 +297,8 @@ def matches_query(concept, query):
         concept["description"],
         " ".join(concept["tags"]) if isinstance(concept["tags"], list) else "",
     ]).lower()
+    if body:
+        searchable += " " + concept.get("_body", "")
 
     for token in tokens:
         if ":" in token and not token.startswith("http"):
@@ -399,6 +419,8 @@ def _print_table(concepts):
 
     for c in concepts:
         desc = c["description"][:80]
+        if c.get("match") == "body":
+            desc += "  (cuerpo)"  # coincidió solo en el cuerpo, no en el frontmatter
         prefix = "⚠ " if c["status"] == "propuesta" else "  "
         print(
             f"{prefix}{c['file']:<{cols['file']}}  "
@@ -470,6 +492,7 @@ def run(args, vault, config=None):
 
     with_graph = getattr(args, "with_graph", False)
     all_versions = getattr(args, "all_versions", False)
+    body_mode = getattr(args, "body", False)
 
     if with_aging and not todos_mode:
         print("Error: --aging only works with --todos", file=sys.stderr)
@@ -513,7 +536,21 @@ def run(args, vault, config=None):
         concepts = kept
 
     if query and query.strip():
-        concepts = [c for c in concepts if matches_query(c, query)]
+        fm_hits = [c for c in concepts if matches_query(c, query)]
+        # Las que coinciden solo en el cuerpo van después de las de frontmatter.
+        # Sin --body solo se cuentan para el pie, y únicamente cuando el
+        # frontmatter devolvió poco (<5): ahí es donde un agente concluye
+        # «no existe» sobre una muestra silenciosa.
+        body_hits = []
+        if body_mode or len(fm_hits) < 5:
+            vistos = {c["file"] for c in fm_hits}
+            body_hits = [c for c in concepts
+                         if c["file"] not in vistos and matches_query(c, query, body=True)]
+        for c in fm_hits:
+            c["match"] = "frontmatter"
+        for c in body_hits:
+            c["match"] = "body"
+        concepts = fm_hits + body_hits
     if filter_type:
         concepts = [c for c in concepts if c["type"].lower() == filter_type.lower()]
     if filter_status:
@@ -585,10 +622,24 @@ def run(args, vault, config=None):
             filtered.append(c)
         concepts = filtered
 
+    # Sin --body las coincidencias de cuerpo no se muestran ni cambian la
+    # salida (tampoco el campo `match` en JSON): solo se anuncian al pie.
+    solo_cuerpo = 0
+    if not body_mode:
+        solo_cuerpo = sum(1 for c in concepts if c.get("match") == "body")
+        concepts = [c for c in concepts if c.get("match") != "body"]
+    for c in concepts:
+        c.pop("_body", None)
+        if not body_mode:
+            c.pop("match", None)
+
     if json_out:
         print(json.dumps(concepts, ensure_ascii=False, indent=2))
     else:
         _print_table(concepts)
+        if solo_cuerpo:
+            print(f"\n({solo_cuerpo} nota(s) más mencionan \"{query.strip()}\" "
+                  f"en el cuerpo; --body para verlas)")
         if hidden_superseded:
             print(f"\n({hidden_superseded} superseded note(s) hidden; "
                   f"--all-versions or --status <state> to see them)")

@@ -60,6 +60,9 @@ def build_parser():
     sp_search = subparsers.add_parser("search", help="Search concepts and tasks")
     sp_search.add_argument("--query", type=str, default=None,
                            help="Filter by text in title, description and tags")
+    sp_search.add_argument("--body", action="store_true", default=False,
+                           help="With --query: also match the note body; body-only "
+                                "matches go after frontmatter matches, marked (cuerpo)")
     sp_search.add_argument("--type", dest="filter_type", type=str, default=None,
                            help="Filter by type (Decision, Project, Spec, etc.)")
     sp_search.add_argument("--status", dest="filter_status", type=str, default=None,
