@@ -131,6 +131,11 @@ def build_parser():
                              default=False,
                              help="Walk superseded notes as they are (default: jump to "
                                   "the current version via the corrige chain)")
+    sp_traverse.add_argument("--compact", action="store_true", default=False,
+                             help="One line per node (no title, tags or score)")
+    sp_traverse.add_argument("--budget", type=int, default=None, metavar="N",
+                             help="Stop the output at N nodes (the receipt says how many "
+                                  "were reachable)")
 
     # ── graph ──
     sp_graph = subparsers.add_parser("graph", help="Analyze the wikilink graph")

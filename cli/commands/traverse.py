@@ -11,6 +11,7 @@ Usage:
     python3 -m cli traverse <concept> [--depth N] [--json]
                                     [--direction both|out|in] [--no-cyber]
                                     [--edge-type <type>] [--filter]
+                                    [--compact] [--budget N]
 
 Semantics (Decision "Every traverse is an ontological search", 2026-08-01):
     --edge-type declares ontological intent (annotation). By default does NOT
@@ -23,6 +24,13 @@ Versión vigente (fase 4, cli/vigente.py): una nota en su estado de reemplazo
 (`superada`, `reemplazada`) se salta por defecto hacia la que la `corrige`,
 siguiendo la cadena hasta la vigente; el nodo visitado anota en `superseded`
 las versiones que se saltaron. --all-versions recorre la cadena tal cual.
+
+Costo de la llamada (--compact, --budget, recibo): un agente paga cada traverse
+en tokens de contexto. --compact imprime una línea por nodo; --budget N corta
+la salida en N nodos; y toda salida termina en un recibo (`📎 recibo:` en texto,
+clave `receipt` en JSON) con nodos devueltos, nodos alcanzables, bytes y tokens
+(bytes // 4). Los bytes del recibo cuentan la salida que lo precede, no al
+recibo mismo.
 """
 
 import json
@@ -156,6 +164,11 @@ def run(args, vault, config=None):
     edge_type_filter = getattr(args, "edge_type", None)
     filter_mode = getattr(args, "filter", False)  # --filter: edge_type excluye (default: anotación)
     all_versions = getattr(args, "all_versions", False)
+    compact = getattr(args, "compact", False)        # --compact: una línea por nodo
+    budget = getattr(args, "budget", None)           # --budget N: la salida se corta en N nodos
+    if budget is not None and budget < 1:
+        print("Error: --budget must be >= 1.", file=sys.stderr)
+        return 1
     if filter_mode and not edge_type_filter:
         print("⚠️  --filter without --edge-type: does not filter anything. Use --edge-type <type> --filter.",
               file=sys.stderr)
@@ -312,6 +325,23 @@ def run(args, vault, config=None):
                      current_path, seed_path, n_score)
                 )
 
+    # ── Presupuesto (--budget) ──
+    # El BFS corre completo (solo lee frontmatter: es barato) para saber cuántos
+    # nodos eran alcanzables; después se recorta la lista. Como el recorte es un
+    # prefijo del mismo BFS, el orden es idéntico al de la salida sin budget.
+    reachable = len(nodes)
+    truncated = budget is not None and reachable > budget
+    if truncated:
+        nodes = nodes[:budget]
+
+    def _receipt(nbytes):
+        """Recibo de la llamada: qué devolvió, qué había y cuánto cuesta leerlo."""
+        return {
+            "nodes": len(nodes), "reachable": reachable, "depth": depth,
+            "bytes": nbytes, "tokens": nbytes // 4,
+            "truncated": truncated, "budget": budget,
+        }
+
     # ── Output JSON ──
     if json_out:
         result = {
@@ -340,32 +370,42 @@ def run(args, vault, config=None):
         ]
         if warnings:
             result["warnings"] = warnings
+        # El recibo mide el JSON sin la clave receipt (no se cuenta a sí mismo).
+        body = json.dumps(result, indent=2, ensure_ascii=False)
+        result["receipt"] = _receipt(len(body.encode("utf-8")))
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
 
     # ── Output legible ──
+    # Se acumula en `out` en vez de imprimir directo: el recibo del final
+    # necesita saber cuántos bytes pesa lo que lo precede.
+    out = []
+
+    def _p(line=""):
+        out.append(line)
+
     if len(resolved_seeds) == 1:
-        print(f"🔗 Traversal from: {resolved_seeds[0]}")
+        _p(f"🔗 Traversal from: {resolved_seeds[0]}")
     else:
-        print(f"🔗 Traversal from {len(resolved_seeds)} seeds:")
+        _p(f"🔗 Traversal from {len(resolved_seeds)} seeds:")
         for s in resolved_seeds:
-            print(f"   📌 {s}")
-    print(f"   Depth: {depth} | Direction: {direction} | "
-          f"Nodes: {len(nodes)}")
+            _p(f"   📌 {s}")
+    _p(f"   Depth: {depth} | Direction: {direction} | "
+       f"Nodes: {len(nodes)}")
 
     if warnings:
-        print()
+        _p()
         for w in warnings:
-            print(f"   ⚠️  {w}")
+            _p(f"   ⚠️  {w}")
 
     # ── Resumen ontológico (modo anotación) ──
     if edge_type_filter and not filter_mode:
         matched = [n for n in nodes
                    if n["from"] is not None and n["edge_type"] == edge_type_filter]
         edges_total = len([n for n in nodes if n["from"] is not None])
-        print()
-        print(f"   🎯 Annotation: {edge_type_filter} — {len(matched)}/{edges_total} "
-              f"edges of the declared type (full superset preserved)")
+        _p()
+        _p(f"   🎯 Annotation: {edge_type_filter} — {len(matched)}/{edges_total} "
+           f"edges of the declared type (full superset preserved)")
         # Contexto del vecindario: tipos dominantes (calibra la anotación contra
         # el anclaje de mostrar el tipo declarado primero — P2-2 del backlog).
         _type_counts: dict = {}
@@ -377,24 +417,25 @@ def run(args, vault, config=None):
             f"{t} ({c})" for t, c in sorted(_type_counts.items(), key=lambda kv: -kv[1])[:4]
         )
         _decl_pct = (len(matched) / edges_total * 100) if edges_total else 0
-        print(f"   📊 Neighborhood: {_dominant} — declared {edge_type_filter} "
-              f"= {_decl_pct:.0f}% of {edges_total} edges")
-    elif not edge_type_filter:
+        _p(f"   📊 Neighborhood: {_dominant} — declared {edge_type_filter} "
+           f"= {_decl_pct:.0f}% of {edges_total} edges")
+    elif not edge_type_filter and not compact:
         # ── Sugerencia ontológica (Nivel 2): si no se usó edge_type, sugerir ──
+        # (en --compact se omite: es guía, no datos del grafo)
         typed_edge_types = {n["edge_type"] for n in nodes
                             if n["edge_type"] not in ("origin", "wikilink", "backlink",
                                                        "cyber.corrects", "cyber.corrected_by")}
         if typed_edge_types:
             et_list = ", ".join(sorted(typed_edge_types))
             typed_count = len([n for n in nodes if n["edge_type"] in typed_edge_types])
-            print()
-            print(f"   💡 Tip: this traversal includes {typed_count} "
-                  f"typed edges ({et_list}).")
-            print(f"   To annotate the explored type: --edge-type <type>")
-            print(f"   To filter (exclusion): --edge-type <type> --filter")
-            print(f"   Example: traverse <slug> --edge-type extiende")
+            _p()
+            _p(f"   💡 Tip: this traversal includes {typed_count} "
+               f"typed edges ({et_list}).")
+            _p(f"   To annotate the explored type: --edge-type <type>")
+            _p(f"   To filter (exclusion): --edge-type <type> --filter")
+            _p(f"   Example: traverse <slug> --edge-type extiende")
 
-    print()
+    _p()
 
     for node in nodes:
         indent = "  " * node["depth"]
@@ -421,18 +462,45 @@ def run(args, vault, config=None):
 
         status_str = f" ({status})" if status else ""
 
-        print(f"{prefix} {node['path']} [{ctype}]{status_str} {title}")
+        if compact:
+            # Una línea por nodo: sin título, sin tags, sin score y sin repetir
+            # el `from` (el `via` basta para saber por qué arista se llegó).
+            desc_c = desc[:80] + "…" if len(desc) > 80 else desc
+            line = f"{prefix} {node['path']} [{ctype}]{status_str}"
+            if desc_c:
+                line += f" — {desc_c}"
+            if node["from"]:
+                line += f" · via {node['edge_type']}"
+            if node.get("superseded"):
+                # Abreviado: solo el nombre del archivo, sin carpeta ni .md
+                line += " · ♻️ vigente de: " + ", ".join(
+                    Path(p).stem for p in node["superseded"])
+            if len(resolved_seeds) > 1 and node.get("seed"):
+                line += f" · 🌰 seed: {node['seed']}"
+            _p(line)
+            continue
+
+        _p(f"{prefix} {node['path']} [{ctype}]{status_str} {title}")
         if desc_short:
-            print(f"{indent}   {desc_short}")
+            _p(f"{indent}   {desc_short}")
         if tag_str:
-            print(f"{indent}   🏷️  {tag_str}")
+            _p(f"{indent}   🏷️  {tag_str}")
         if node["from"]:
             score_str = f" ({node.get('score', 0):.2f})" if node.get("score", 0) > 0 else ""
-            print(f"{indent}   via {node['edge_type']}{score_str} ← {node['from']}")
+            _p(f"{indent}   via {node['edge_type']}{score_str} ← {node['from']}")
         if node.get("superseded"):
-            print(f"{indent}   ♻️  vigente de: {', '.join(node['superseded'])}")
+            _p(f"{indent}   ♻️  vigente de: {', '.join(node['superseded'])}")
         if len(resolved_seeds) > 1 and node.get("seed"):
-            print(f"{indent}   🌰 seed: {node['seed']}")
-        print()
+            _p(f"{indent}   🌰 seed: {node['seed']}")
+        _p()
+
+    # ── Recibo: siempre, en modo normal y compacto ──
+    text = "\n".join(out) + "\n"
+    r = _receipt(len(text.encode("utf-8")))
+    sys.stdout.write(text)
+    budget_str = f" (--budget {budget})" if budget is not None else ""
+    print(f"📎 recibo: {r['nodes']} nodos de {r['reachable']} · depth {depth} · "
+          f"{r['bytes']} bytes ≈ {r['tokens']} tokens · "
+          f"truncado: {'sí' if truncated else 'no'}{budget_str}")
 
     return 0
