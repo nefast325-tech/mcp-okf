@@ -573,7 +573,7 @@ def _run(args: list[str], tool_name: str = "unknown", params: dict | None = None
 
 
 @_mcp_tool()
-def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: bool = False, json_output: bool = False, seeds: str = "", edge_type: str = "", filter: bool = False, all_versions: bool = False) -> str:
+def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: bool = False, json_output: bool = False, seeds: str = "", edge_type: str = "", filter: bool = False, all_versions: bool = False, compact: bool = False, budget: int = 0) -> str:
     """Semantic traversal of the OKF graph. Returns concept frontmatter + neighborhood (wikilinks, backlinks, cyber.corrects).
 
     PRIMARY USE for querying the vault. Prefer over search.
@@ -596,6 +596,11 @@ def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: 
         filter: If True, edge_type excludes edges not of that type (explicit exclusion).
         all_versions: If True, walks superseded notes as they are. By default a note in
                       its replaced state is skipped to its current version (corrige chain).
+        compact: If True, one line per node (no title, tags or score). About 4x fewer
+                 tokens than the default output.
+        budget: If > 0, the output stops at that many nodes. The receipt at the end
+                (`📎 recibo:` / JSON key `receipt`) says how many were reachable, the
+                bytes and the approximate tokens of the answer.
     """
     if not edge_type or not edge_type.strip():
         return "[error] traverse requires edge_type: every traverse is an ontological search — declare the explored type (extiende|refina|fundamenta|aplica|depende|corrige). See Decision 2026-08-01."
@@ -627,6 +632,12 @@ def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: 
     if all_versions:
         args.append("--all-versions")
         params["all_versions"] = True
+    if compact:
+        args.append("--compact")
+        params["compact"] = True
+    if budget and budget > 0:
+        args += ["--budget", str(int(budget))]
+        params["budget"] = int(budget)
     return _run(args, tool_name="okf_traverse", params=params)
 
 
