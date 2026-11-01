@@ -499,18 +499,24 @@ def run(args, vault, config=None):
 
     concepts = find_concepts(vault)
 
-    # Las reemplazadas se ocultan salvo --all-versions o --status <ese estado>
-    hidden_superseded = 0
+    # Las reemplazadas se ocultan salvo --all-versions o --status <ese estado>.
+    # Se guardan aparte para contar al pie solo las que coinciden con la
+    # consulta y el tipo: el total del vault no le dice nada al agente.
+    hidden = []
     if not all_versions and not filter_status:
         from cli.states import is_replaced_status, schema_for
         kept = []
         for c in concepts:
             if (schema_for(config, c["type"]) is not None
                     and is_replaced_status(config, c["type"], c["status"])):
-                hidden_superseded += 1
+                hidden.append(c)
                 continue
             kept.append(c)
         concepts = kept
+    if query and query.strip():
+        hidden = [c for c in hidden if matches_query(c, query)]
+    if filter_type:
+        hidden = [c for c in hidden if c["type"].lower() == filter_type.lower()]
 
     if query and query.strip():
         concepts = [c for c in concepts if matches_query(c, query)]
@@ -589,9 +595,21 @@ def run(args, vault, config=None):
         print(json.dumps(concepts, ensure_ascii=False, indent=2))
     else:
         _print_table(concepts)
-        if hidden_superseded:
-            print(f"\n({hidden_superseded} superseded note(s) hidden; "
-                  f"--all-versions or --status <state> to see them)")
+        if hidden:
+            # Cada oculta con su vigente (slugs sin .md: el trazador del
+            # server tomaría un token terminado en .md como nodo resultado).
+            # Con --json no se agrega nada: la salida es una lista.
+            from cli.commands.graph import build_graph
+            from cli.vigente import build_superseded_map, slug_of
+            vigentes = build_superseded_map(vault, build_graph(vault), config)
+            pares = []
+            for c in hidden:
+                vigente = vigentes.get(c["file"])
+                destino = (f"vigente {slug_of(vigente)}" if vigente
+                           else "sin vigente declarada")
+                pares.append(f"{slug_of(c['file'])} → {destino}")
+            print(f"\n({len(hidden)} nota(s) reemplazada(s) coinciden y se ocultan: "
+                  f"{'; '.join(pares)}; --all-versions para verlas)")
         if with_graph and not todos_mode:
             edges = _find_typed_edges(concepts, vault)
             if edges:

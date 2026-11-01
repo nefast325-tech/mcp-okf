@@ -83,6 +83,22 @@ def run(args, vault, config=None):
         label = "no touch" if no_touch else "test session — no touch"
         print(f"📖 {rel}  ({label})", file=sys.stderr)
 
+    # Vigencia: si la nota está reemplazada, decirlo ANTES del cuerpo y a
+    # stdout (el MCP devuelve stdout); con --limit chico el agente podría no
+    # llegar a la línea `status:` ni a `cyber.corrected_by`.
+    from cli.vigente import resolve_note, slug_of
+    info = resolve_note(vault, str(rel), config)
+    if info["replaced"]:
+        if info["current"]:
+            titulo = f" — {info['current_title']}" if info["current_title"] else ""
+            print(f"♻️  Esta nota está reemplazada (status: {info['status']}). "
+                  f"Versión vigente: {slug_of(info['current'])}{titulo}. Leé esa.")
+        else:
+            print(f"♻️  Esta nota está reemplazada (status: {info['status']}), "
+                  "sin versión vigente declarada (ninguna nota la corrige).")
+    if info["corrects"]:
+        print(f"↩️  Corrige a: {', '.join(slug_of(c) for c in info['corrects'])}")
+
     # Imprimir contenido
     print(f"─── {rel} ({filepath.stat().st_size} bytes) ───", file=sys.stderr)
     lines = filepath.read_text(encoding="utf-8").split("\n")
