@@ -145,6 +145,13 @@ DEFAULTS: dict[str, Any] = {
         # por defecto. Con strict_pairs: true, `validate` lo rechaza y
         # new/edit no escriben la arista.
         "strict_pairs": False,
+        # Un apoyo (extiende/fundamenta/depende/aplica) de una nota viva en
+        # una reemplazada o en una muerta sin sucesora es aviso en `validate`
+        # y señal en `stale`; `health` lo cuenta en su sección «coherencia».
+        # Con coherencia_strict: true, `health --strict` también lo cuenta
+        # como warning y sale con 1. Opt-in: un vault con deuda vieja no
+        # tiene por qué ver su CI roto por una regla nueva.
+        "coherencia_strict": False,
         # Los valid_pairs embebidos en cli/edge_types.py usan el vocabulario
         # de un vault concreto (Criterio, LeccionAprendida, MarcoTeorico…).
         # Con inherit_default_pairs: false, el vault declara TODOS sus pares
@@ -443,6 +450,12 @@ class Config:
     @property
     def graph_strict_pairs(self) -> bool:
         return bool(self._data["graph"].get("strict_pairs", False))
+
+    @property
+    def graph_coherencia_strict(self) -> bool:
+        """`graph.coherencia_strict`: si los apoyos en reemplazadas o muertas
+        cuentan como warning en `health --strict`. False por defecto."""
+        return bool(self._data["graph"].get("coherencia_strict", False))
 
     @property
     def graph_inherit_default_pairs(self) -> bool:

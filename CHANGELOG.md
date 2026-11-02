@@ -5,6 +5,16 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
+### La coherencia que avisa `validate` se ve en `stale` y en `health`
+
+Medido en `controlresearch-vault` (cd1dce5, 1-nov-2026): `validate --all` emitía 15 avisos de apoyo en reemplazada o en muerta sin sucesora desde 13 nodos vivos, `stale` los clasificaba 🟢 y `health --json` daba warnings=0. Un sensor que avisa en una salida que nadie lee no es un sensor.
+
+- **La regla sale de `validate` a `cli/vigente.py`** (`apoyos_rotos_de`, `apoyos_rotos`, `describe_apoyo`, `resolve_target_rel`, `nota_viva`): por nota fuente, cada arista de apoyo (`extiende`/`fundamenta`/`depende`/`aplica`) con su destino resuelto, el estado del destino, la clase (`reemplazada` o `muerta`) y la versión vigente si la hay. `validate` redacta sus avisos desde esa lista: **mismo texto, mismo orden** (diff vacío sobre el vault medido).
+- **`stale`, señal 9** («apoyo en reemplazada (fundamenta → x)», «apoyo en muerta sin sucesora (extiende → y)»): una señal por arista, y en `details.apoyos_rotos` cada arista con su `vigente`. Los 13 nodos dejan de ser 🟢 (uno con tres fundamentos derogados pasa a 🔴). El grafo se construye una sola vez: lo comparten los backlinks y esta señal.
+- **`health`, sección «Coherencia»**: conteo de aristas y de nodos, los tres primeros detalles con su vigente y, en `--json`, la clave `results.coherencia` (`evaluada`, `aristas`, `nodos`, `strict`, `details`). **No entra al score ni a los warnings**: `health --strict` sale con el mismo código que antes. Para que cuente, el vault declara `graph.coherencia_strict: true` en `.okf.config.yaml` (`Config.graph_coherencia_strict`); recién entonces cada arista es un warning y `--strict` falla. Opt-in a propósito: los vaults que hoy pasan el CI con deuda de coherencia siguen pasando hasta que decidan saldarla.
+- Sin esquema de estados (`types.states`) nada cambia: `stale` no agrega la señal y `health` dice «Coherencia: no evaluada».
+- Tests: `tests/test_r2_coherencia_en_stale_y_health.py` (+12).
+
 ---
 ## [2026-11-01] — v0.4.32
 

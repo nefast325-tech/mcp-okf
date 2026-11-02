@@ -350,19 +350,11 @@ def _resolve_edge_target(vault, target, current_dir, name_index=None):
     el tipo del destino quedaba en `'?'` y el par era imposible de declarar en
     `valid_pairs`, así que `graph.strict_pairs: true` era inalcanzable.
     """
-    try:
-        from cli.wikilinks import resolve_link
-        rel = resolve_link(target, vault, current_dir, name_index)
-    except Exception:
-        rel = None
-    if rel:
-        cand = vault / rel
-        if cand.exists():
-            return cand
-    for cand in (vault / target, vault / (str(target) + ".md")):
-        if cand.exists():
-            return cand
-    return None
+    # La resolución vive en cli/vigente.py (`resolve_target_rel`) porque
+    # `stale` y `health` resuelven las mismas aristas para el mismo aviso.
+    from cli.vigente import resolve_target_rel
+    rel = resolve_target_rel(vault, target, current_dir, name_index)
+    return (vault / rel) if rel else None
 
 
 def _check_edge_type_consistency(filepath, vault, definitions=None, config=None,
@@ -392,8 +384,8 @@ def _check_edge_type_consistency(filepath, vault, definitions=None, config=None,
     """
     from cli.edge_types import VALID_EDGE_TYPES, validate_cross_type_pair, score_edge
     from cli.frontmatter import parse_frontmatter
-    from cli.states import is_dead_status, is_replaced_status, schema_for, states_strict
-    from cli.vigente import SUPPORT_EDGES
+    from cli.states import is_replaced_status, schema_for, states_strict
+    from cli.vigente import apoyos_rotos_de
 
     strict_pairs = bool(getattr(config, "graph_strict_pairs", False)) if config else False
     errors = []
@@ -415,8 +407,25 @@ def _check_edge_type_consistency(filepath, vault, definitions=None, config=None,
     rel = str(filepath.relative_to(vault))
     src_type = str(fm.get("type", ""))
 
+    # Fase 4: una nota vigente que se apoya (extiende, fundamenta, depende)
+    # en una ya reemplazada sigue una verdad vieja. Aviso siempre, nunca
+    # error: la cadena de corrige dice cuál es la vigente, y mover la arista
+    # es decisión de quien edita. Dos casos más que antes pasaban en silencio:
+    # - `aplica` hacia una reemplazada: el trabajo suele seguir valiendo (la
+    #   decisión se corrigió en un detalle); el aviso pide re-anclar la
+    #   arista, no revisar el trabajo.
+    # - apoyo en una nota muerta sin sucesora (un plan `cancelada`, según
+    #   `dead` de su capa): no hay vigente a la que saltar; lo que se apoya
+    #   ahí quedó sin base.
+    # La detección es de cli/vigente.py (`apoyos_rotos_de`): la misma que
+    # usan `stale` y `health`, para que los tres cuenten lo mismo. Acá solo
+    # se redacta el aviso, en la posición de la arista para no reordenar la
+    # salida respecto de los avisos de pares atípicos.
+    rotas_por_indice = {a["index"]: a for a in apoyos_rotos_de(
+        vault, rel, fm, config, name_index=name_index)}
+
     types_per_target = {}
-    for link in links:
+    for i, link in enumerate(links):
         if not isinstance(link, dict):
             continue
         target = str(link.get("target", ""))
@@ -432,51 +441,25 @@ def _check_edge_type_consistency(filepath, vault, definitions=None, config=None,
             types_per_target[target] = set()
         types_per_target[target].add(edge_type)
 
-        src_status = fm.get("status")
-        src_viva = (schema_for(config, src_type) is not None
-                    and not is_replaced_status(config, src_type, src_status)
-                    and not is_dead_status(config, src_type, src_status))
-        if src_viva and edge_type in SUPPORT_EDGES + ("aplica",):
-            # Fase 4: una nota vigente que se apoya (extiende, fundamenta,
-            # depende) en una ya reemplazada sigue una verdad vieja. Aviso
-            # siempre, nunca error: la cadena de corrige dice cuál es la
-            # vigente, y mover la arista es decisión de quien edita.
-            # Dos casos más que antes pasaban en silencio:
-            # - `aplica` hacia una reemplazada: el trabajo suele seguir
-            #   valiendo (la decisión se corrigió en un detalle); el aviso
-            #   pide re-anclar la arista, no revisar el trabajo.
-            # - apoyo en una nota muerta sin sucesora (un plan `cancelada`,
-            #   según `dead` de su capa): no hay vigente a la que saltar; lo
-            #   que se apoya ahí quedó sin base.
-            target_file = _resolve_edge_target(vault, target, filepath.parent, name_index)
-            if target_file is not None:
-                try:
-                    t_fm, _ = parse_frontmatter(target_file.read_text(encoding="utf-8"))
-                except Exception:
-                    t_fm = None
-                if t_fm:
-                    t_type = str(t_fm.get("type", ""))
-                    t_status = t_fm.get("status")
-                    if schema_for(config, t_type) is None:
-                        pass
-                    elif is_replaced_status(config, t_type, t_status):
-                        if edge_type == "aplica":
-                            warnings.append(
-                                f"  links: {rel} 'aplica' → '{target}', que está en "
-                                f"'{t_status}' (reemplazada): re-anclá la arista en su "
-                                f"versión vigente (la que la 'corrige'); el trabajo "
-                                f"puede seguir valiendo")
-                        else:
-                            warnings.append(
-                                f"  links: {rel} '{edge_type}' → '{target}', que está en "
-                                f"'{t_status}' (reemplazada): apoyate en su versión "
-                                f"vigente (la que la 'corrige')")
-                    elif edge_type in SUPPORT_EDGES and is_dead_status(
-                            config, t_type, t_status):
-                        warnings.append(
-                            f"  links: {rel} '{edge_type}' → '{target}', que está en "
-                            f"'{t_status}' (muerta, sin sucesora): lo que se apoya ahí "
-                            f"quedó sin base; re-anclalo o cerralo")
+        rota = rotas_por_indice.get(i)
+        if rota is not None:
+            t_status = rota["target_status"]
+            if rota["clase"] == "muerta":
+                warnings.append(
+                    f"  links: {rel} '{edge_type}' → '{target}', que está en "
+                    f"'{t_status}' (muerta, sin sucesora): lo que se apoya ahí "
+                    f"quedó sin base; re-anclalo o cerralo")
+            elif edge_type == "aplica":
+                warnings.append(
+                    f"  links: {rel} 'aplica' → '{target}', que está en "
+                    f"'{t_status}' (reemplazada): re-anclá la arista en su "
+                    f"versión vigente (la que la 'corrige'); el trabajo "
+                    f"puede seguir valiendo")
+            else:
+                warnings.append(
+                    f"  links: {rel} '{edge_type}' → '{target}', que está en "
+                    f"'{t_status}' (reemplazada): apoyate en su versión "
+                    f"vigente (la que la 'corrige')")
 
         if edge_type == "corrige":
             target_file = _resolve_edge_target(vault, target, filepath.parent, name_index)

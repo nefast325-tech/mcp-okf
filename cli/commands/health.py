@@ -10,6 +10,15 @@
     7. Cyber block: valid
     8. Plugin↔spec sync (plugin_hash vs repo HEAD)
     9. Timestamp vs git (creation date consistency)
+
+Sección «coherencia» (fuera del score): apoyos de notas vivas en reemplazadas
+o en muertas sin sucesora (cli/vigente.py, `apoyos_rotos`: la misma regla
+que avisa `validate` y señala `stale`). Se muestra siempre —conteo de aristas,
+de nodos y los primeros detalles, clave `coherencia` en `--json`— pero NO
+cuenta como warning ni cambia el código de salida de `--strict`, salvo que el
+vault lo pida con `graph.coherencia_strict: true` en `.okf.config.yaml`.
+Opt-in a propósito: los vaults que hoy pasan el CI con deuda de coherencia
+siguen pasando hasta que decidan saldarla.
 """
 
 import json
@@ -128,11 +137,16 @@ def _check_indices(vault):
 
 # ── Check 3: Grafo ──
 
-def _check_graph(vault):
-    """Graph health via cli.commands.graph (direct import, not subprocess)."""
+def _check_graph(vault, graph=None):
+    """Graph health via cli.commands.graph (direct import, not subprocess).
+
+    `graph`: el grafo ya construido, si `run` lo tiene (lo comparte con la
+    sección de coherencia); sin él se construye acá.
+    """
     try:
         from cli.commands.graph import build_graph, build_tag_index
-        graph = build_graph(vault)
+        if graph is None:
+            graph = build_graph(vault)
         tag_index = build_tag_index(vault)
 
         # Nodos leaf (frontmatter leaf: true, expuesto por build_graph) +
@@ -169,6 +183,35 @@ def _check_graph(vault):
         }, warnings
     except Exception as e:
         return None, [f"graph analysis failed: {e}"]
+
+
+# ── Coherencia: apoyos en reemplazadas o muertas (fuera del score) ──
+
+def _check_coherencia(vault, config, graph=None):
+    """Cuenta las aristas de apoyo rotas que `validate` avisa, por nodo.
+
+    Devuelve {"evaluada", "aristas", "nodos", "details"}: `details` son
+    líneas `fuente: apoyo en … (arista → destino) · vigente: x`, una por
+    arista, en orden de ruta. Sin esquema de estados no se evalúa
+    (`evaluada: False`, conteos en 0), igual que en `validate`.
+    """
+    if config is None or not getattr(config, "states_schemas", None):
+        return {"evaluada": False, "aristas": 0, "nodos": 0, "details": []}
+    from cli.vigente import apoyos_rotos, describe_apoyo, slug_of
+    try:
+        rotos = apoyos_rotos(vault, config, graph=graph)
+    except Exception as e:
+        return {"evaluada": False, "aristas": 0, "nodos": 0,
+                "details": [f"coherencia: no se pudo evaluar: {e}"]}
+    details = []
+    for src in sorted(rotos):
+        for a in rotos[src]:
+            line = f"{slug_of(src)}: {describe_apoyo(a)}"
+            if a.get("vigente"):
+                line += f" · vigente: {slug_of(a['vigente'])}"
+            details.append(line)
+    return {"evaluada": True, "aristas": len(details), "nodos": len(rotos),
+            "details": details}
 
 
 # ── Check 4: Links rotos ──
@@ -672,12 +715,33 @@ def run(args, vault, config=None):
     results["indices"] = {"ok": idx_ok, "stale": len(idx_stale), "details": idx_stale[:10]}
     all_warnings.extend(idx_stale)
 
-    # 3. Grafo
-    graph_data, graph_warn = _check_graph(vault)
+    # 3. Grafo — se construye UNA vez y lo comparten el check 3 y la
+    # sección de coherencia. Si falla, `_check_graph` lo reintenta y reporta.
+    try:
+        from cli.commands.graph import build_graph
+        graph = build_graph(vault)
+    except Exception:
+        graph = None
+    graph_data, graph_warn = _check_graph(vault, graph=graph)
     results["graph"] = graph_data
     if graph_data is None:
         all_errors.append("graph: could not be analyzed")
     all_warnings.extend(graph_warn)
+
+    # 3b. Coherencia: apoyos en reemplazadas o muertas sin sucesora. Fuera
+    # del score y de los warnings salvo `graph.coherencia_strict: true`: un
+    # aviso nuevo no puede romper el CI de un vault que ayer pasaba.
+    coherencia = _check_coherencia(vault, config, graph=graph)
+    coherencia_strict = bool(getattr(config, "graph_coherencia_strict", False)) if config else False
+    results["coherencia"] = {
+        "evaluada": coherencia["evaluada"],
+        "aristas": coherencia["aristas"],
+        "nodos": coherencia["nodos"],
+        "strict": coherencia_strict,
+        "details": coherencia["details"][:15],
+    }
+    if coherencia_strict:
+        all_warnings.extend(f"coherencia: {d}" for d in coherencia["details"])
 
     # 4. Links rotos
     broken = _check_broken_links(vault)
@@ -791,6 +855,22 @@ def run(args, vault, config=None):
                   f"density {g['density']:.3f}{tag_str}")
     else:
         print("❌ Graph: could not be analyzed")
+
+    c = coherencia
+    if not c["evaluada"]:
+        detalle = f" ({c['details'][0]})" if c["details"] else " (sin esquema de estados)"
+        print(f"ℹ️  Coherencia: no evaluada{detalle}")
+    elif c["aristas"]:
+        modo = ("cuenta en --strict" if coherencia_strict
+                else "no cuenta en --strict; graph.coherencia_strict: true para que cuente")
+        print(f"⚠️  Coherencia: {c['aristas']} apoyo(s) en reemplazada o muerta sin "
+              f"sucesora desde {c['nodos']} nodo(s) — {modo}")
+        for d in c["details"][:3]:
+            print(f"   - {d}")
+        if c["aristas"] > 3:
+            print(f"   … y {c['aristas'] - 3} más (`validate --all` los lista todos)")
+    else:
+        print("✅ Coherencia: ningún apoyo en reemplazada ni en muerta sin sucesora")
 
     if broken:
         print(f"⚠️  Broken links: {len(broken)}")
