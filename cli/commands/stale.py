@@ -18,6 +18,17 @@ Signals:
      that the body already solved (checkboxes [x] > 70%)
   8. verification overdue       → `revisar_el` (or `verificado_el` + the
      type's `types.review` days) is in the past (cli/verificacion.py)
+  9. apoyo en reemplazada / muerta → una señal POR ARISTA de apoyo
+     (extiende, fundamenta, depende, aplica) de una nota viva hacia una nota
+     en su estado de reemplazo, o (solo extiende/fundamenta/depende) hacia
+     una en estado `dead` sin sucesora. Texto:
+       `apoyo en reemplazada (fundamenta → decisions/x)`
+       `apoyo en muerta sin sucesora (extiende → plans/y)`
+     y en `details.apoyos_rotos` cada arista con su `vigente` (la que la
+     `corrige`), si la hay. Es la misma regla que avisa `validate`
+     (cli/vigente.py, `apoyos_rotos`): hasta v0.4.32 solo salía por stderr
+     del validador y acá esos nodos se veían 🟢. Requiere esquema de
+     estados (`types.states`); sin él no aplica.
 
 Classification:
   🔴 STALE     — 3+ signals
@@ -129,7 +140,7 @@ def has_problem_language(description, patterns=None):
     return False
 
 
-def build_backlinks_index(vault):
+def build_backlinks_index(vault, graph=None):
     """Builds backlinks index: {target_relpath: [source_relpaths]}.
 
     Usa la misma resolución que `graph` (`build_graph`): wikilinks resueltos
@@ -137,11 +148,16 @@ def build_backlinks_index(vault):
     frontmatter. Antes resolvía solo por nombre de archivo —un `[[a/x]]`
     caía en cualquier `x.md`— e ignoraba `links:`, así que marcaba
     «no backlinks» conceptos que sí los tienen.
+
+    `graph` es el grafo ya construido, si el llamador lo tiene: `collect_stale`
+    lo usa también para la señal 9 y no lo construye dos veces.
     """
-    from cli.commands.graph import build_graph
+    if graph is None:
+        from cli.commands.graph import build_graph
+        graph = build_graph(vault)
 
     index = {}
-    for rel, node in build_graph(vault).items():
+    for rel, node in graph.items():
         sources = set(node["in"]) | {e["target"] for e in node["typed_in"]}
         if sources:
             index[rel] = sorted(sources)
@@ -177,8 +193,14 @@ def collect_stale(vault, timestamp_days=90, propuesta_days=30,
     # Señales 3 y 6 leen la máquina de estados del vault (cli/states.py):
     # sin esquema valen los literales históricos («propuesta», Decision).
     from cli.states import pending_states, requires_status, schema_for
+    from cli.commands.graph import build_graph
+    from cli.vigente import apoyos_rotos, describe_apoyo, slug_of
     today = get_today()
-    backlinks = build_backlinks_index(vault)
+    # El grafo se construye UNA vez: lo usan la señal 4 (backlinks) y la 9
+    # (apoyos rotos, que necesita `corrige` entrante para nombrar la vigente).
+    graph = build_graph(vault)
+    backlinks = build_backlinks_index(vault, graph=graph)
+    apoyos = apoyos_rotos(vault, config, graph=graph)
     reads_index = get_reads(vault)
     from cli.gitutil import build_git_dates_index
     git_index = build_git_dates_index(vault)
@@ -281,6 +303,22 @@ def collect_stale(vault, timestamp_days=90, propuesta_days=30,
         if overdue is not None:
             signals.append(f"verification overdue ({overdue}d)")
             details["verification_overdue_days"] = overdue
+
+        # ── Señal 9: apoyo en reemplazada o en muerta sin sucesora ──
+        # Una señal por arista: cada una es una corrección distinta (re-anclar
+        # en la vigente, o cerrar lo que quedó sin base). Tres fundamentos
+        # derogados hacen a la nota 🔴, y eso es lo que queremos que se vea.
+        rotas = apoyos.get(rel) or []
+        if rotas:
+            for a in rotas:
+                signals.append(describe_apoyo(a))
+            details["apoyos_rotos"] = [{
+                "type": a["type"],
+                "target": slug_of(a["target"]),
+                "target_status": str(a["target_status"] or ""),
+                "clase": a["clase"],
+                "vigente": slug_of(a["vigente"]) if a["vigente"] else None,
+            } for a in rotas]
 
         # ── Clasificar ──
         count = len(signals)

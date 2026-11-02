@@ -5,6 +5,27 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
+### La coherencia que avisa `validate` se ve en `stale` y en `health`
+
+Medido en `controlresearch-vault` (cd1dce5, 1-nov-2026): `validate --all` emitía 15 avisos de apoyo en reemplazada o en muerta sin sucesora desde 13 nodos vivos, `stale` los clasificaba 🟢 y `health --json` daba warnings=0. Un sensor que avisa en una salida que nadie lee no es un sensor.
+
+- **La regla sale de `validate` a `cli/vigente.py`** (`apoyos_rotos_de`, `apoyos_rotos`, `describe_apoyo`, `resolve_target_rel`, `nota_viva`): por nota fuente, cada arista de apoyo (`extiende`/`fundamenta`/`depende`/`aplica`) con su destino resuelto, el estado del destino, la clase (`reemplazada` o `muerta`) y la versión vigente si la hay. `validate` redacta sus avisos desde esa lista: **mismo texto, mismo orden** (diff vacío sobre el vault medido).
+- **`stale`, señal 9** («apoyo en reemplazada (fundamenta → x)», «apoyo en muerta sin sucesora (extiende → y)»): una señal por arista, y en `details.apoyos_rotos` cada arista con su `vigente`. Los 13 nodos dejan de ser 🟢 (uno con tres fundamentos derogados pasa a 🔴). El grafo se construye una sola vez: lo comparten los backlinks y esta señal.
+- **`health`, sección «Coherencia»**: conteo de aristas y de nodos, los tres primeros detalles con su vigente y, en `--json`, la clave `results.coherencia` (`evaluada`, `aristas`, `nodos`, `strict`, `details`). **No entra al score ni a los warnings**: `health --strict` sale con el mismo código que antes. Para que cuente, el vault declara `graph.coherencia_strict: true` en `.okf.config.yaml` (`Config.graph_coherencia_strict`); recién entonces cada arista es un warning y `--strict` falla. Opt-in a propósito: los vaults que hoy pasan el CI con deuda de coherencia siguen pasando hasta que decidan saldarla.
+- Sin esquema de estados (`types.states`) nada cambia: `stale` no agrega la señal y `health` dice «Coherencia: no evaluada».
+- Tests: `tests/test_r2_coherencia_en_stale_y_health.py` (+12).
+
+### `read` avisa los apoyos rotos (`cli/vigente.py`, `cli/commands/read.py`)
+
+Laboratorio ronda 2, dolor D2: `validate --all` decía que `sistema/arquitectura-del-sitio-el-crm-y-el-flujo-de-leads` tenía 3 `fundamenta` hacia decisiones reemplazadas, pero `read` devolvía el cuerpo sin una palabra, y `read` es la salida que sí se lee: el agente razonaba sobre lo derogado.
+
+- **Banner antes del cuerpo**: una línea por arista rota, a stdout, después del bloque ♻️/↩️ y antes de las líneas numeradas — `⚠️  se apoya (fundamenta) en decisions/x, reemplazada → vigente decisions/y`; `⚠️  se apoya (extiende) en plans/z, cancelada (muerta, sin sucesora)`; `(sin vigente declarada)` si nadie la corrige. Si la vigente es la misma de la línea anterior dice `→ la misma vigente` (tres decisiones corregidas por una sola costaban más en slugs repetidos que todo el aviso). Cierra con `→ N apoyos rotos: re-anclá la arista o revisá el cuerpo.`; esa línea no nombra estados a propósito, para que un conteo por línea no la sume como aviso.
+- **Mismo criterio que `validate` fase 4** (`apoyos_rotos_de`): fuente viva; `extiende`/`fundamenta`/`depende`/`aplica` hacia una reemplazada; `extiende`/`fundamenta`/`depende` hacia una muerta sin sucesora (`dead` de la capa). Una reemplazada que se apoya en otra es historia y no avisa (ya lleva ♻️). Sin esquema de estados no cambia nada.
+- **Costo**: una nota limpia solo paga el frontmatter de sus destinos (0 bytes de más). Solo si algún destino está reemplazada se recorre el vault, y con `grafo_de_corrige` (una pasada por frontmatter, solo aristas `corrige`, el `fm_cache` compartido con `build_superseded_map`) en vez de `build_graph`, que extrae wikilinks y puntúa aristas que acá no se usan. Medido sobre el vault congelado (132 notas): arquitectura 11.699 → 12.293 bytes (+594), 0,09 → 0,16 s; `plans/el-asistente-de-control-crm` 1 aviso; `sistema/control-research-sas` idéntico.
+- Tests: `tests/test_r2_read_avisa_apoyo_roto.py` (+10): reemplazada con vigente (dos con la misma), huérfana vía `aplica`, muerta sin sucesora, `aplica` hacia muerta no avisa, limpio, reemplazada que se apoya en reemplazada, el grafo liviano de `corrige` da el mismo mapa que `build_graph`, sin esquema, y `--offset/--limit`.
+
+---
+
 ---
 ## [2026-11-01] — v0.4.32
 

@@ -99,6 +99,14 @@ def run(args, vault, config=None):
     if info["corrects"]:
         print(f"↩️  Corrige a: {', '.join(slug_of(c) for c in info['corrects'])}")
 
+    # Apoyos rotos: una nota viva que se apoya (extiende, fundamenta, depende,
+    # aplica) en una reemplazada o muerta devolvía el cuerpo sin decirlo y el
+    # agente razonaba sobre lo derogado. Una línea por arista, antes del
+    # cuerpo y a stdout; una nota limpia no imprime nada.
+    from cli.vigente import apoyos_rotos_para_read, formato_apoyos_rotos
+    for line in formato_apoyos_rotos(apoyos_rotos_para_read(vault, str(rel), config)):
+        print(line)
+
     # Imprimir contenido
     print(f"─── {rel} ({filepath.stat().st_size} bytes) ───", file=sys.stderr)
     lines = filepath.read_text(encoding="utf-8").split("\n")
