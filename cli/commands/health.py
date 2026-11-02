@@ -331,6 +331,10 @@ def _smoke_fields(vault, config, concept_type="Decision"):
     return args
 
 
+# Comandos del smoke que main() rechaza con OKF_READONLY (cli/access.py).
+WRITE_SMOKE = frozenset({"new"})
+
+
 def _check_scripts(vault, smoke_entry_point="tp3-cibernetico", config=None):
     """Smoke test: CLI commands work (via subprocess, self-contained).
 
@@ -338,6 +342,7 @@ def _check_scripts(vault, smoke_entry_point="tp3-cibernetico", config=None):
     (serially they added ~30s of wall time to ``health``).
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    from cli.access import is_readonly
     cli_module = str((Path(__file__).resolve().parent.parent.parent))
 
     tests = [
@@ -352,6 +357,16 @@ def _check_scripts(vault, smoke_entry_point="tp3-cibernetico", config=None):
           "--description", "Automatic health check test.", "--dry-run"]
          + _smoke_fields(vault, config), 10),
     ]
+
+    # Con OKF_READONLY, main() bloquea `new` entero, también con --dry-run
+    # (que no escribe). Un agente de solo lectura veía siempre «Scripts 7/8»
+    # y 🔴 sobre un vault sano. El smoke no puede verificar `new` desde ese
+    # proceso: se omite y se dice, en vez de contarlo como fallo.
+    skipped = []
+    if is_readonly():
+        skipped = [f"cli {' '.join(t[0][:2])} … --dry-run (omitido: OKF_READONLY)"
+                   for t in tests if t[0][0] in WRITE_SMOKE]
+        tests = [t for t in tests if t[0][0] not in WRITE_SMOKE]
 
     def _run_one(cmd_args, timeout):
         name = f"cli {' '.join(cmd_args)}"
@@ -397,7 +412,7 @@ def _check_scripts(vault, smoke_entry_point="tp3-cibernetico", config=None):
             else:
                 failed.append(_err)
 
-    return ok, failed
+    return ok, failed, skipped
 
 
 # ── Check 6: Git hook ──
@@ -749,9 +764,10 @@ def run(args, vault, config=None):
     all_warnings.extend(broken[:15])
 
     # 5. Scripts
-    scripts_ok, scripts_failed = _check_scripts(vault, smoke_entry_point=smoke_entry,
-                                                config=config)
-    results["scripts"] = {"ok": scripts_ok, "failed": len(scripts_failed), "details": scripts_failed}
+    scripts_ok, scripts_failed, scripts_skipped = _check_scripts(
+        vault, smoke_entry_point=smoke_entry, config=config)
+    results["scripts"] = {"ok": scripts_ok, "failed": len(scripts_failed), "details": scripts_failed,
+                          "skipped": scripts_skipped}
     all_errors.extend(scripts_failed)
 
     # 6. Git hook
@@ -880,12 +896,15 @@ def run(args, vault, config=None):
         print("✅ Links: no broken links detected")
 
     total_scr = scripts_ok + len(scripts_failed)
+    skipped_note = f" ({len(scripts_skipped)} skipped: read-only)" if scripts_skipped else ""
     if scripts_failed:
-        print(f"❌ Scripts: {scripts_ok}/{total_scr} functional")
+        print(f"❌ Scripts: {scripts_ok}/{total_scr} functional{skipped_note}")
         for f in scripts_failed:
             print(f"   - {f}")
     else:
-        print(f"✅ Scripts: {total_scr}/{total_scr} functional")
+        print(f"✅ Scripts: {total_scr}/{total_scr} functional{skipped_note}")
+    for sk in scripts_skipped:
+        print(f"   - {sk}")
 
     if hook_ok:
         print("✅ Git hook: pre-commit present and executable")

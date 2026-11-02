@@ -82,7 +82,7 @@ def _note(vault, rel, ctype, status, links=None):
 _LIMPIO = {
     "_check_indices": (0, []),
     "_check_broken_links": [],
-    "_check_scripts": (1, []),
+    "_check_scripts": (1, [], []),
     "_check_git_hook": (True, None),
     "_check_cyber": (0, [], []),
     "_check_plugin_hash_sync": (0, []),
