@@ -4,6 +4,13 @@ Versión vigente (fase 4, cli/vigente.py): las notas en su estado de reemplazo
 (`superada`, `reemplazada`) no salen en los resultados salvo que se pida ese
 status con --status o se pase --all-versions. Cada una tiene una vigente
 (la que la `corrige`) y es esa la que responde la búsqueda.
+
+Dónde coincidió el cuerpo (ronda 2, D3): con --body cada acierto de cuerpo
+dice en qué línea está la primera mención (`line`, numerada como `read`),
+qué dice esa línea (`snippet`, ≤ 160 chars), bajo qué encabezado cae
+(`section`) y cuántas líneas del cuerpo mencionan el término (`matches`).
+Sin eso el agente tenía que abrir cada nota para saber si la mención era
+central o incidental. El cuerpo entero nunca se devuelve.
 """
 
 import json
@@ -240,13 +247,130 @@ def _body_after_frontmatter(text, fm_text):
     return partes[2] if len(partes) == 3 else ""
 
 
+def _body_first_line(text, fm_text):
+    """Número de línea (1-indexado, como numera `read`) de la primera línea del
+    cuerpo: las del `---` de apertura, el frontmatter y el `---` de cierre
+    se cuentan desde el texto, así la numeración no depende de cuántas
+    líneas tenga el frontmatter."""
+    return text[:3 + len(fm_text)].count("\n") + 3
+
+
+# Encabezado ATX de Markdown (`# …` a `###### …`), con o sin `#` de cierre.
+_HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
+
+SNIPPET_MAX = 160   # chars del fragmento; el cuerpo nunca se devuelve entero
+SECTION_MAX = 60    # chars del encabezado en JSON
+SECTION_TABLE_MAX = 40  # chars del encabezado en la tabla legible
+
+
+def _recortar(texto, maximo):
+    """Recorta a `maximo` chars con «…» final si hubo que cortar."""
+    if len(texto) <= maximo:
+        return texto
+    return texto[:maximo - 1] + "…"
+
+
+def _snippet(linea, pos, largo):
+    """Ventana de ≤ SNIPPET_MAX chars de `linea` (ya sin saltos ni tabs)
+    centrada en el término que empieza en `pos` y mide `largo`; «…» reemplaza
+    el primer/último char de cada borde recortado para que el largo total no
+    pase del máximo."""
+    if len(linea) <= SNIPPET_MAX:
+        return linea
+    centro = pos + largo // 2
+    inicio = max(0, centro - SNIPPET_MAX // 2)
+    fin = inicio + SNIPPET_MAX
+    if fin > len(linea):
+        fin = len(linea)
+        inicio = fin - SNIPPET_MAX
+    ventana = linea[inicio:fin]
+    if inicio > 0:
+        ventana = "…" + ventana[1:]
+    if fin < len(linea):
+        ventana = ventana[:-1] + "…"
+    return ventana
+
+
+def _es_filtro(token):
+    """True si el token es un filtro de campo (type:/status:/title:/cyber.*:)
+    y no texto a buscar. Es la misma regla que aplica `matches_query`."""
+    if ":" not in token or token.startswith("http"):
+        return False
+    field = token.split(":", 1)[0].strip()
+    return "." in field or field in ("type", "status", "title")
+
+
+def _fm_searchable(concept):
+    """Título, descripción y tags en minúsculas: lo que busca `search` sin --body."""
+    return " ".join([
+        concept["title"],
+        concept["description"],
+        " ".join(concept["tags"]) if isinstance(concept["tags"], list) else "",
+    ]).lower()
+
+
+def locate_body_match(concept, query):
+    """Dónde, cuánto y bajo qué título coincide el cuerpo con la consulta.
+
+    Devuelve {line, snippet, section, matches}:
+    - `line`: línea (1-indexada desde el inicio del archivo, igual que `read`)
+      de la PRIMERA mención.
+    - `snippet`: esa línea, recortada a ≤ 160 chars centrada en el término.
+    - `section`: último encabezado Markdown que precede a la mención (o el de
+      la misma línea, si la mención está en un título), recortado a 60; None
+      si no hay encabezado antes.
+    - `matches`: cuántas líneas del cuerpo mencionan el término; con varios
+      términos AND, cuántas mencionan al menos uno.
+
+    Los términos que se buscan son los que NO están en el frontmatter: son los
+    que hicieron que la nota entrara como acierto de cuerpo. Si todos están en
+    el frontmatter (no debería pasar en un acierto de cuerpo) se usan todos.
+    Los `#` dentro de un bloque de código no son encabezados.
+    """
+    fm = _fm_searchable(concept)
+    tokens = [t for t in query.lower().split() if not _es_filtro(t)]
+    terminos = [t for t in tokens if t not in fm] or tokens
+    resultado = {"line": None, "snippet": "", "section": None, "matches": 0}
+    if not terminos:
+        return resultado
+
+    seccion = None
+    en_codigo = False
+    for i, linea in enumerate(concept.get("_body_raw", "").split("\n"),
+                              concept.get("_body_start", 1)):
+        if linea.strip().startswith("```"):
+            en_codigo = not en_codigo
+            continue
+        if not en_codigo:
+            m = _HEADING_RE.match(linea)
+            if m:
+                seccion = m.group(2).strip() or None
+        baja = linea.lower()
+        posiciones = [(baja.find(t), len(t)) for t in terminos if t in baja]
+        if not posiciones:
+            continue
+        resultado["matches"] += 1
+        if resultado["line"] is None:
+            resultado["line"] = i
+            # La posición se busca sobre la línea normalizada (sin tabs ni
+            # dobles espacios) para que el centrado del fragmento sea exacto.
+            plana = " ".join(linea.split())
+            pos, largo = min((plana.lower().find(t), len(t))
+                             for t in terminos if t in plana.lower())
+            resultado["snippet"] = _snippet(plana, pos, largo)
+            resultado["section"] = _recortar(seccion, SECTION_MAX) if seccion else None
+    return resultado
+
+
 def find_concepts(vault):
     """Finds all concepts with frontmatter in the vault.
 
     El cuerpo (texto tras el frontmatter) se conserva en `_body`, en
     minúsculas, para que la búsqueda por cuerpo reutilice esta misma lectura
-    en vez de abrir cada archivo dos veces. Es una clave privada: `run` la
-    quita antes de imprimir.
+    en vez de abrir cada archivo dos veces; `_body_raw` (tal cual, para el
+    fragmento y el encabezado) y `_body_start` (línea del archivo donde
+    empieza el cuerpo) sirven para decir dónde coincidió. Son claves
+    privadas: `run` las quita antes de imprimir.
     """
     concepts = []
     for md_file in find_md_files(vault):
@@ -264,6 +388,7 @@ def find_concepts(vault):
         folder = _extract_project(parts)
 
         tags = normalize_tags(fm.get("tags", []))
+        body = _body_after_frontmatter(text, fm_text)
 
         concepts.append({
             "file": relpath,
@@ -276,7 +401,9 @@ def find_concepts(vault):
             "resource": str(fm.get("resource", "")),
             "timestamp": str(fm.get("timestamp", "")),
             "cyber": _sanitize_cyber(fm.get("cyber")),
-            "_body": _body_after_frontmatter(text, fm_text).lower(),
+            "_body": body.lower(),
+            "_body_raw": body,
+            "_body_start": _body_first_line(text, fm_text),
         })
 
     return concepts
@@ -292,11 +419,7 @@ def matches_query(concept, query, body=False):
     if not tokens:
         return True
 
-    searchable = " ".join([
-        concept["title"],
-        concept["description"],
-        " ".join(concept["tags"]) if isinstance(concept["tags"], list) else "",
-    ]).lower()
+    searchable = _fm_searchable(concept)
     if body:
         searchable += " " + concept.get("_body", "")
 
@@ -394,6 +517,16 @@ def _print_todos(todos, with_aging=False):
     print(f"\n─ {total} task(s) in {len(by_project)} project(s)")
 
 
+def _marca_cuerpo(c):
+    """«(cuerpo L<n> · <k> menc. · § <sección>)»; sin línea queda «(cuerpo)»."""
+    if not c.get("line"):
+        return "(cuerpo)"
+    partes = [f"cuerpo L{c['line']}", f"{c.get('matches', 0)} menc."]
+    if c.get("section"):
+        partes.append(f"§ {_recortar(c['section'], SECTION_TABLE_MAX)}")
+    return "(" + " · ".join(partes) + ")"
+
+
 def _print_table(concepts):
     """Prints a formatted text table."""
     if not concepts:
@@ -420,7 +553,9 @@ def _print_table(concepts):
     for c in concepts:
         desc = c["description"][:80]
         if c.get("match") == "body":
-            desc += "  (cuerpo)"  # coincidió solo en el cuerpo, no en el frontmatter
+            # Coincidió solo en el cuerpo: decir dónde (línea como la numera
+            # `read`), cuánto (líneas que mencionan) y bajo qué encabezado.
+            desc += "  " + _marca_cuerpo(c)
         prefix = "⚠ " if c["status"] == "propuesta" else "  "
         print(
             f"{prefix}{c['file']:<{cols['file']}}  "
@@ -558,6 +693,10 @@ def run(args, vault, config=None):
             c["match"] = "frontmatter"
         for c in body_hits:
             c["match"] = "body"
+            if body_mode:
+                # Solo con --body: sin él estas notas no se muestran y el
+                # trabajo sería en vano.
+                c.update(locate_body_match(c, query))
         concepts = fm_hits + body_hits
     if filter_type:
         concepts = [c for c in concepts if c["type"].lower() == filter_type.lower()]
@@ -637,7 +776,8 @@ def run(args, vault, config=None):
         solo_cuerpo = sum(1 for c in concepts if c.get("match") == "body")
         concepts = [c for c in concepts if c.get("match") != "body"]
     for c in concepts:
-        c.pop("_body", None)
+        for k in ("_body", "_body_raw", "_body_start"):
+            c.pop(k, None)
         if not body_mode:
             c.pop("match", None)
 
