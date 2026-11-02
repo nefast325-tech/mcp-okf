@@ -5,37 +5,47 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
-### La coherencia que avisa `validate` se ve en `stale` y en `health`
-
-Medido en `controlresearch-vault` (cd1dce5, 1-nov-2026): `validate --all` emitía 15 avisos de apoyo en reemplazada o en muerta sin sucesora desde 13 nodos vivos, `stale` los clasificaba 🟢 y `health --json` daba warnings=0. Un sensor que avisa en una salida que nadie lee no es un sensor.
-
-- **La regla sale de `validate` a `cli/vigente.py`** (`apoyos_rotos_de`, `apoyos_rotos`, `describe_apoyo`, `resolve_target_rel`, `nota_viva`): por nota fuente, cada arista de apoyo (`extiende`/`fundamenta`/`depende`/`aplica`) con su destino resuelto, el estado del destino, la clase (`reemplazada` o `muerta`) y la versión vigente si la hay. `validate` redacta sus avisos desde esa lista: **mismo texto, mismo orden** (diff vacío sobre el vault medido).
-- **`stale`, señal 9** («apoyo en reemplazada (fundamenta → x)», «apoyo en muerta sin sucesora (extiende → y)»): una señal por arista, y en `details.apoyos_rotos` cada arista con su `vigente`. Los 13 nodos dejan de ser 🟢 (uno con tres fundamentos derogados pasa a 🔴). El grafo se construye una sola vez: lo comparten los backlinks y esta señal.
-- **`health`, sección «Coherencia»**: conteo de aristas y de nodos, los tres primeros detalles con su vigente y, en `--json`, la clave `results.coherencia` (`evaluada`, `aristas`, `nodos`, `strict`, `details`). **No entra al score ni a los warnings**: `health --strict` sale con el mismo código que antes. Para que cuente, el vault declara `graph.coherencia_strict: true` en `.okf.config.yaml` (`Config.graph_coherencia_strict`); recién entonces cada arista es un warning y `--strict` falla. Opt-in a propósito: los vaults que hoy pasan el CI con deuda de coherencia siguen pasando hasta que decidan saldarla.
-- Sin esquema de estados (`types.states`) nada cambia: `stale` no agrega la señal y `health` dice «Coherencia: no evaluada».
-- Tests: `tests/test_r2_coherencia_en_stale_y_health.py` (+12).
-
-### `read` avisa los apoyos rotos (`cli/vigente.py`, `cli/commands/read.py`)
-
-Laboratorio ronda 2, dolor D2: `validate --all` decía que `sistema/arquitectura-del-sitio-el-crm-y-el-flujo-de-leads` tenía 3 `fundamenta` hacia decisiones reemplazadas, pero `read` devolvía el cuerpo sin una palabra, y `read` es la salida que sí se lee: el agente razonaba sobre lo derogado.
-
-- **Banner antes del cuerpo**: una línea por arista rota, a stdout, después del bloque ♻️/↩️ y antes de las líneas numeradas — `⚠️  se apoya (fundamenta) en decisions/x, reemplazada → vigente decisions/y`; `⚠️  se apoya (extiende) en plans/z, cancelada (muerta, sin sucesora)`; `(sin vigente declarada)` si nadie la corrige. Si la vigente es la misma de la línea anterior dice `→ la misma vigente` (tres decisiones corregidas por una sola costaban más en slugs repetidos que todo el aviso). Cierra con `→ N apoyos rotos: re-anclá la arista o revisá el cuerpo.`; esa línea no nombra estados a propósito, para que un conteo por línea no la sume como aviso.
-- **Mismo criterio que `validate` fase 4** (`apoyos_rotos_de`): fuente viva; `extiende`/`fundamenta`/`depende`/`aplica` hacia una reemplazada; `extiende`/`fundamenta`/`depende` hacia una muerta sin sucesora (`dead` de la capa). Una reemplazada que se apoya en otra es historia y no avisa (ya lleva ♻️). Sin esquema de estados no cambia nada.
-- **Costo**: una nota limpia solo paga el frontmatter de sus destinos (0 bytes de más). Solo si algún destino está reemplazada se recorre el vault, y con `grafo_de_corrige` (una pasada por frontmatter, solo aristas `corrige`, el `fm_cache` compartido con `build_superseded_map`) en vez de `build_graph`, que extrae wikilinks y puntúa aristas que acá no se usan. Medido sobre el vault congelado (132 notas): arquitectura 11.699 → 12.293 bytes (+594), 0,09 → 0,16 s; `plans/el-asistente-de-control-crm` 1 aviso; `sistema/control-research-sas` idéntico.
-- Tests: `tests/test_r2_read_avisa_apoyo_roto.py` (+10): reemplazada con vigente (dos con la misma), huérfana vía `aplica`, muerta sin sucesora, `aplica` hacia muerta no avisa, limpio, reemplazada que se apoya en reemplazada, el grafo liviano de `corrige` da el mismo mapa que `build_graph`, sin esquema, y `--offset/--limit`.
-
 ---
-### Búsqueda (`search --body` dice dónde, cuánto y bajo qué título)
 
-- **Cada acierto de cuerpo trae `line`, `snippet`, `section` y `matches`** (`cli/commands/search.py`): v0.4.32 marcaba `match: "body"` y `(cuerpo)` pero no decía dónde, y el agente abría cada nota para saber si la mención era central o incidental. Ahora `line` es la línea de la primera mención, numerada como `read` (contando el frontmatter, tenga las líneas que tenga); `snippet` es esa línea recortada a ≤ 160 chars centrada en el término, con «…» en los bordes cortados; `section` es el último encabezado Markdown que la precede (≤ 60 chars, `null` si no hay; los `#` dentro de un bloque de código no cuentan); `matches` es cuántas líneas del cuerpo mencionan el término (con varios términos AND, cuántas mencionan al menos uno). Los términos que se localizan son los que no están en el frontmatter: los que hicieron que la nota entrara como acierto de cuerpo. El cuerpo entero sigue sin devolverse.
+## [2026-11-01] — v0.4.33
+
+Cuatro PRs de Medardo (#47–#50), verificados uno por uno con su suite en worktree y con E2E sobre copia congelada de `controlresearch-vault` (`0fb657d`, 162 notas). La tanda tiene dos mitades: **los dos fixes que impedían trabajar a un agente de solo lectura o cerrar un relevo** (#47, #50), y **la coherencia y el cuerpo que existían pero no se veían** (#48, #49) — `validate` sabía qué estaba apoyado en lo derogado y `search --body` sabía dónde coincidía, pero solo lo decían donde nadie miraba. Suite: **627**.
+
+### Un solo criterio de coherencia, visible en cuatro comandos (`cli/vigente.py`, #48)
+
+Medido en `controlresearch-vault` (`cd1dce5`, 1-nov-2026): `validate --all` emitía 15 avisos de apoyo en reemplazada o en muerta sin sucesora desde 13 nodos vivos, `stale` los clasificaba 🟢 y `health --json` daba warnings=0. Un sensor que avisa en una salida que nadie lee no es un sensor.
+
+- **La regla sale de `validate` a `cli/vigente.py`** (`apoyos_rotos_de`, `apoyos_rotos`, `describe_apoyo`, `resolve_target_rel`, `nota_viva`): por nota fuente, cada arista de apoyo (`extiende`/`fundamenta`/`depende`/`aplica`) con su destino resuelto, el estado del destino, la clase (`reemplazada` o `muerta`) y la versión vigente si la hay. `validate` redacta sus avisos desde esa lista: **mismo texto, mismo orden** — verificado con `validate --all` diff vacío contra master sobre el vault de 162 notas.
+- **`stale`, señal 9**: una señal por arista (`apoyo en reemplazada (fundamenta → x)`, `apoyo en muerta sin sucesora (extiende → y)`), con el detalle en `details.apoyos_rotos`. El grafo se construye una sola vez: lo comparten los backlinks y esta señal.
+- **`health`, sección «Coherencia»**: aristas y nodos en texto y en `results.coherencia`. **No entra al score ni a los warnings**: `health --strict` sale con el código que salía (verificado: 0 antes y después). Con `graph.coherencia_strict: true` en `.okf.config.yaml` cada arista pasa a warning y `--strict` sale con 1 (verificado). Opt-in para no romper el CI de un vault con deuda vieja.
+- **`read` avisa antes del cuerpo**: una línea por arista rota con su versión vigente. Una nota limpia no cambia ni un byte (2.852 → 2.852 medido). Solo paga el frontmatter de sus destinos; si alguno está reemplazado recorre el vault con `grafo_de_corrige` en vez de `build_graph`.
+- Sin esquema de estados (`types.states`) no cambia nada: `stale` no agrega la señal y `health` dice «Coherencia: no evaluada».
+- Costo medido: `stale` 0,98 → 1,34 s en `skynet-vault` (336 notas), 3,39 → 3,64 s en `OKF-Vault` (1.436); `health` sin cambio (−2 %). `read` de una nota limpia: sin degradación.
+- Tests: `tests/test_r2_coherencia_en_stale_y_health.py` (+12), `tests/test_r2_read_avisa_apoyo_roto.py` (+10).
+
+### Búsqueda (`search --body` dice dónde, cuánto y bajo qué título, #49)
+
+- **Cada acierto de cuerpo trae `line`, `snippet`, `section` y `matches`**: `line` es la línea de la primera mención, numerada como numera `read` (así `read --offset <line>` cae ahí); `snippet` es esa línea recortada a ≤ 160 chars centrada en el término; `section` es el último encabezado Markdown que la precede (`null` si no hay; los `#` dentro de un bloque de código no cuentan); `matches` es cuántas líneas del cuerpo mencionan el término. Los términos localizados son los que no están en el frontmatter. El cuerpo entero sigue sin devolverse.
 - **La tabla** muestra `(cuerpo L<n> · <k> menc. · § <sección ≤ 40>)` donde antes decía `(cuerpo)`.
-- **Sin cambios fuera de `--body`**: los aciertos de frontmatter no llevan estos campos y sin `--body` el JSON es idéntico. `find_concepts` guarda además `_body_raw` y `_body_start` (claves privadas, se quitan antes de imprimir) en la misma lectura. Medido sobre `controlresearch-vault` (131 notas, `--query formulario --body --json`): 6.447 → 7.819 bytes, 7/7 aciertos de cuerpo localizados.
-### `health` en solo-lectura no castiga al vault (`cli/commands/health.py`)
+- Sin cambios fuera de `--body`: los aciertos de frontmatter no llevan estos campos y sin `--body` el JSON es idéntico.
+- Verificado sobre `controlresearch-vault` (`--query formulario --body`): 7/7 aciertos de cuerpo localizados, y las 7 líneas reportadas contienen el término en el archivo real (0 falsos). JSON 7.521 → 8.894 bytes (1,18×), sin cambio de tiempo.
+- Test: `tests/test_r2_search_linea_seccion_menciones.py` (+16).
 
-- Con `OKF_READONLY=true` el smoke test lanzaba `cli new … --dry-run` y main() lo rechazaba (bloquea `new` entero, aunque `--dry-run` no escribe): todo agente de solo lectura —auditor, perfil público— veía siempre «❌ Scripts: 7/8» y 🔴 sobre un vault sano. Visto el 2026-11-01 con cinco agentes a la vez sobre `controlresearch-vault`. Ahora el smoke omite en solo-lectura los comandos que main() bloquearía, los imprime como «(1 skipped: read-only)» y los devuelve en `scripts.skipped` del JSON. `_check_scripts` devuelve `(ok, failed, skipped)`. Test: `tests/test_health_smoke_readonly.py`.
-### `new --type Handoff` respeta la capa declarada (`cli/commands/new.py`)
+### `health` en solo-lectura no castiga al vault (#47)
 
-- La plantilla de Handoff escribía `status: pending` siempre. En un vault que pone Handoff en la capa `registro` (`states: []`), cada Handoff nacía inválido —«'Handoff' no lleva status»— y había que quitarle el status con `edit --field status=` antes de commitear. Visto el 2026-11-01 al simular un relevo entre dos agentes sobre `controlresearch-vault`. Ahora el default solo se escribe si el vault no declara el tipo en una capa sin estados; sin config no cambia nada. Test: `tests/test_new_handoff_registro.py`.
+- Con `OKF_READONLY=true` el smoke test lanzaba `cli new … --dry-run` y `main()` lo rechazaba (bloquea `new` entero, aunque `--dry-run` no escriba), así que **todo agente de solo lectura veía 🔴 `7/8 — 1 errors` sobre un vault sano**. Ahora `_check_scripts` omite los comandos que el guardia bloquearía (`WRITE_SMOKE`) y los devuelve en `scripts.skipped`: `✅ Scripts: 7/7 functional (1 skipped: read-only)`. No se abrió el guardia: un proceso readonly no lanza `new` con ningún flag. Sin `OKF_READONLY` no cambia nada.
+- Verificado con `OKF_READONLY=true` sobre el vault de 162 notas: master 🔴 `7/8`, esta versión 🟢 `8/8`.
+- Test: `tests/test_health_smoke_readonly.py` (+3).
+
+### `new --type Handoff` respeta la capa declarada (#50)
+
+- La plantilla de Handoff escribía `status: pending` siempre. En un vault que pone Handoff en la capa `registro` (`states: []`), como `controlresearch-vault`, cada Handoff nacía inválido y había que quitarle el status con `edit --field status=` antes de commitear. Ahora el default solo se escribe si el tipo no está en una capa sin estados; sin config, o con un esquema que sí declara estados, no cambia nada.
+- Verificado con escritura real: la nota nace sin `status:` y `validate` da `✅ 1 valid`; master escribe `status: pending` y aborta el commit.
+- Test: `tests/test_new_handoff_registro.py` (+3).
+
+### Integración de la tanda
+
+#47 y #48 no son independientes: #47 cambia `_check_scripts` a devolver `(ok, failed, skipped)` y el stub que trae #48 lo simulaba con dos valores, así que el segundo de los dos rompía cinco tests con `ValueError`. El commit de merge de #47 ajusta el stub a `(1, [], [])`. Los tres conflictos de `CHANGELOG.md` fueron aditivos.
 
 ---
 ## [2026-11-01] — v0.4.32
