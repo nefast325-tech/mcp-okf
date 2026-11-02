@@ -5,6 +5,10 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
+### `health` en solo-lectura no castiga al vault (`cli/commands/health.py`)
+
+- Con `OKF_READONLY=true` el smoke test lanzaba `cli new … --dry-run` y main() lo rechazaba (bloquea `new` entero, aunque `--dry-run` no escribe): todo agente de solo lectura —auditor, perfil público— veía siempre «❌ Scripts: 7/8» y 🔴 sobre un vault sano. Visto el 2026-11-01 con cinco agentes a la vez sobre `controlresearch-vault`. Ahora el smoke omite en solo-lectura los comandos que main() bloquearía, los imprime como «(1 skipped: read-only)» y los devuelve en `scripts.skipped` del JSON. `_check_scripts` devuelve `(ok, failed, skipped)`. Test: `tests/test_health_smoke_readonly.py`.
+
 ---
 ## [2026-11-01] — v0.4.32
 
