@@ -5,6 +5,10 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
+### `new --type Handoff` respeta la capa declarada (`cli/commands/new.py`)
+
+- La plantilla de Handoff escribía `status: pending` siempre. En un vault que pone Handoff en la capa `registro` (`states: []`), cada Handoff nacía inválido —«'Handoff' no lleva status»— y había que quitarle el status con `edit --field status=` antes de commitear. Visto el 2026-11-01 al simular un relevo entre dos agentes sobre `controlresearch-vault`. Ahora el default solo se escribe si el vault no declara el tipo en una capa sin estados; sin config no cambia nada. Test: `tests/test_new_handoff_registro.py`.
+
 ---
 ## [2026-11-01] — v0.4.32
 
