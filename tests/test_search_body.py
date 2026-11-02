@@ -102,7 +102,9 @@ class SearchBodyTest(unittest.TestCase):
         self.assertIn("decisions/leads-al-crm.md", lineas[0])
         self.assertNotIn("(cuerpo)", lineas[0])
         self.assertIn("plans/sitio-cliente.md", lineas[1])
-        self.assertTrue(lineas[1].endswith("(cuerpo)"), lineas[1])
+        # Desde la ronda 2 el marcador dice dónde: «(cuerpo L<n> · <k> menc.)».
+        self.assertIn("(cuerpo L9 · 1 menc.)", lineas[1])
+        self.assertTrue(lineas[1].endswith(")"), lineas[1])
         self.assertNotIn("plans/otro.md", r.stdout)
         self.assertNotIn("--body para verlas", r.stdout)
 

@@ -25,6 +25,11 @@ Laboratorio ronda 2, dolor D2: `validate --all` decía que `sistema/arquitectura
 - Tests: `tests/test_r2_read_avisa_apoyo_roto.py` (+10): reemplazada con vigente (dos con la misma), huérfana vía `aplica`, muerta sin sucesora, `aplica` hacia muerta no avisa, limpio, reemplazada que se apoya en reemplazada, el grafo liviano de `corrige` da el mismo mapa que `build_graph`, sin esquema, y `--offset/--limit`.
 
 ---
+### Búsqueda (`search --body` dice dónde, cuánto y bajo qué título)
+
+- **Cada acierto de cuerpo trae `line`, `snippet`, `section` y `matches`** (`cli/commands/search.py`): v0.4.32 marcaba `match: "body"` y `(cuerpo)` pero no decía dónde, y el agente abría cada nota para saber si la mención era central o incidental. Ahora `line` es la línea de la primera mención, numerada como `read` (contando el frontmatter, tenga las líneas que tenga); `snippet` es esa línea recortada a ≤ 160 chars centrada en el término, con «…» en los bordes cortados; `section` es el último encabezado Markdown que la precede (≤ 60 chars, `null` si no hay; los `#` dentro de un bloque de código no cuentan); `matches` es cuántas líneas del cuerpo mencionan el término (con varios términos AND, cuántas mencionan al menos uno). Los términos que se localizan son los que no están en el frontmatter: los que hicieron que la nota entrara como acierto de cuerpo. El cuerpo entero sigue sin devolverse.
+- **La tabla** muestra `(cuerpo L<n> · <k> menc. · § <sección ≤ 40>)` donde antes decía `(cuerpo)`.
+- **Sin cambios fuera de `--body`**: los aciertos de frontmatter no llevan estos campos y sin `--body` el JSON es idéntico. `find_concepts` guarda además `_body_raw` y `_body_start` (claves privadas, se quitan antes de imprimir) en la misma lectura. Medido sobre `controlresearch-vault` (131 notas, `--query formulario --body --json`): 6.447 → 7.819 bytes, 7/7 aciertos de cuerpo localizados.
 
 ---
 ## [2026-11-01] — v0.4.32
