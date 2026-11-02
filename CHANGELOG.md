@@ -33,6 +33,9 @@ Laboratorio ronda 2, dolor D2: `validate --all` decía que `sistema/arquitectura
 ### `health` en solo-lectura no castiga al vault (`cli/commands/health.py`)
 
 - Con `OKF_READONLY=true` el smoke test lanzaba `cli new … --dry-run` y main() lo rechazaba (bloquea `new` entero, aunque `--dry-run` no escribe): todo agente de solo lectura —auditor, perfil público— veía siempre «❌ Scripts: 7/8» y 🔴 sobre un vault sano. Visto el 2026-11-01 con cinco agentes a la vez sobre `controlresearch-vault`. Ahora el smoke omite en solo-lectura los comandos que main() bloquearía, los imprime como «(1 skipped: read-only)» y los devuelve en `scripts.skipped` del JSON. `_check_scripts` devuelve `(ok, failed, skipped)`. Test: `tests/test_health_smoke_readonly.py`.
+### `new --type Handoff` respeta la capa declarada (`cli/commands/new.py`)
+
+- La plantilla de Handoff escribía `status: pending` siempre. En un vault que pone Handoff en la capa `registro` (`states: []`), cada Handoff nacía inválido —«'Handoff' no lleva status»— y había que quitarle el status con `edit --field status=` antes de commitear. Visto el 2026-11-01 al simular un relevo entre dos agentes sobre `controlresearch-vault`. Ahora el default solo se escribe si el vault no declara el tipo en una capa sin estados; sin config no cambia nada. Test: `tests/test_new_handoff_registro.py`.
 
 ---
 ## [2026-11-01] — v0.4.32

@@ -388,6 +388,15 @@ def _parse_links(links):
     return result
 
 
+def _registro_sin_status(config, concept_type):
+    """True si el vault declara el tipo en una capa sin estados (registro)."""
+    if config is None:
+        return False
+    from cli.states import schema_for
+    schema = schema_for(config, concept_type)
+    return schema is not None and not schema["states"]
+
+
 def _build_frontmatter(concept_type, title, description, status, resource, tags,
                        cyber, links=None, config=None, omit_timestamps=False,
                        extra_lines=None):
@@ -417,8 +426,11 @@ def _build_frontmatter(concept_type, title, description, status, resource, tags,
 
     if status:
         lines.append(f"status: {status}")
-    elif concept_type == "Handoff":
-        # Handoff: ciclo de vida propio (pending | completed | expired) — spec de handoff
+    elif concept_type == "Handoff" and not _registro_sin_status(config, "Handoff"):
+        # Handoff: ciclo de vida propio (pending | completed | expired) — spec de handoff.
+        # Solo si el vault no declara otra cosa: si su .okf.config.yaml pone Handoff
+        # en una capa sin estados (registro), escribir `status: pending` crea una
+        # nota que validate rechaza nada más nacer («'Handoff' no lleva status»).
         lines.append("status: pending")
 
     if resource:
