@@ -293,3 +293,93 @@ def describe_apoyo(arista):
     """
     que = "reemplazada" if arista["clase"] == "reemplazada" else "muerta sin sucesora"
     return f"apoyo en {que} ({arista['type']} → {slug_of(arista['target'])})"
+
+
+# ── Lo que `read` necesita: los apoyos rotos de UNA nota, con su vigente ──
+#
+# `apoyos_rotos` (arriba) sirve a `stale` y `health`, que ya tienen el grafo
+# entero. `read` mira una sola nota y no debe pagar `build_graph` (extrae
+# wikilinks y puntúa aristas que acá no se usan): solo si algún destino está
+# reemplazado necesita seguir `corrige` hasta la vigente, y para eso alcanza
+# una pasada por el frontmatter.
+
+
+def grafo_de_corrige(vault, fm_cache):
+    """Grafo mínimo con solo las aristas `corrige`, para `build_superseded_map`.
+
+    La forma es la que el mapa lee: {rel: {"typed_in": [{"target": <fuente>,
+    "type": "corrige"}]}}, con el mismo conjunto de nodos que `build_graph`
+    (`find_md_files(vault)`). El `fm_cache` queda poblado y el mapa lo
+    reutiliza: una sola lectura de cada frontmatter.
+    """
+    rels = [str(f.relative_to(vault)) for f in find_md_files(vault)]
+    graph = {rel: {"typed_in": []} for rel in rels}
+    for rel in rels:
+        if rel not in fm_cache:
+            fm_cache[rel] = _frontmatter(vault, rel)
+        links = fm_cache[rel].get("links")
+        for link in (links if isinstance(links, list) else []):
+            if not isinstance(link, dict) or link.get("type") != "corrige":
+                continue
+            target = resolve_target_rel(vault, str(link.get("target", "")).strip(),
+                                        (vault / rel).parent)
+            if target and target in graph and target != rel:
+                graph[target]["typed_in"].append({"target": rel, "type": "corrige"})
+    return graph
+
+
+def apoyos_rotos_para_read(vault, rel, config, fm=None, graph=None):
+    """Apoyos rotos de `rel` con su `vigente` resuelta, al costo mínimo.
+
+    Es `apoyos_rotos_de` más la vigente de cada destino reemplazado: el
+    mapa de reemplazos se construye solo si hace falta, y con
+    `grafo_de_corrige` salvo que el llamador ya tenga un grafo. Una nota
+    limpia o con un apoyo muerto paga apenas el frontmatter de sus destinos.
+    Sin esquema de estados devuelve [].
+    """
+    rel = str(rel)
+    if config is None or not getattr(config, "states_schemas", None):
+        return []
+    fm = fm if fm is not None else _frontmatter(vault, rel)
+    fm_cache = {rel: fm}
+    rotas = apoyos_rotos_de(vault, rel, fm, config, fm_cache=fm_cache)
+    if any(r["clase"] == "reemplazada" for r in rotas):
+        if graph is None:
+            graph = grafo_de_corrige(vault, fm_cache)
+        superseded = build_superseded_map(vault, graph, config, fm_cache)
+        for r in rotas:
+            if r["clase"] == "reemplazada":
+                r["vigente"] = superseded.get(r["target"])
+    return rotas
+
+
+def formato_apoyos_rotos(rotos):
+    """Líneas del banner de `read` para `apoyos_rotos_para_read`, una por arista.
+
+    Si la vigente repite la de la línea anterior se dice «la misma vigente»:
+    cuando tres decisiones se corrigieron en una sola, repetir su slug tres
+    veces costaba más bytes que todo el resto del aviso. Cierra con el conteo
+    y qué hacer; esa línea no nombra estados a propósito, para que un conteo
+    de avisos por línea no la cuente como uno más.
+    """
+    if not rotos:
+        return []
+    lines = []
+    prev_current = None
+    for r in rotos:
+        head = f"⚠️  se apoya ({r['type']}) en {slug_of(r['target'])}, {r['target_status']}"
+        if r["clase"] == "muerta":
+            lines.append(f"{head} (muerta, sin sucesora)")
+            prev_current = None
+        elif r.get("vigente") is None:
+            lines.append(f"{head} (sin vigente declarada)")
+            prev_current = None
+        elif r["vigente"] == prev_current:
+            lines.append(f"{head} → la misma vigente")
+        else:
+            lines.append(f"{head} → vigente {slug_of(r['vigente'])}")
+            prev_current = r["vigente"]
+    n = len(rotos)
+    lines.append(f"   → {n} apoyo{'s' if n != 1 else ''} roto{'s' if n != 1 else ''}: "
+                 "re-anclá la arista o revisá el cuerpo.")
+    return lines

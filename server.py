@@ -742,6 +742,11 @@ def read(slug: str, offset: int = 1, limit: int = 500, no_touch: bool = False) -
     confirms its relevance. NEVER use system read_file on vault .md files.
     If the concept is superseded, the first line says so and names its
     current version («♻️ … Versión vigente: <slug>»): read that one.
+    If a live concept rests on a superseded or dead one (typed edges
+    extiende/fundamenta/depende/aplica in `links:`), the output opens with
+    one «⚠️ se apoya (<edge>) en <slug>, reemplazada → vigente <slug>» line
+    per broken edge (or «cancelada (muerta, sin sucesora)»), then the body:
+    reason from the current version, not from the superseded one.
 
     Args:
         slug: Concept slug (e.g.: 'decisions/mcp-okf-cli-como-correccion-de-sesgo-de-toolset')
@@ -834,7 +839,11 @@ def health(strict: bool = False, json_output: bool = False) -> str:
     """Complete health check of the OKF vault (8 checks).
 
     Verifies: frontmatter, indexes, graph (orphans, density), broken links,
-    scripts (smoke test), git hook, cyber block, plugin↔spec sync.
+    scripts (smoke test), git hook, cyber block, plugin↔spec sync. Plus an
+    informative «Coherencia» section (`results.coherencia` in JSON): how many
+    typed edges from live concepts rest on superseded or dead ones. It does
+    not count as a warning unless the vault sets
+    `graph.coherencia_strict: true` in .okf.config.yaml.
 
     Args:
         strict: If True, exit code 1 if there are warnings
@@ -896,9 +905,12 @@ def session_metrics(json_output: bool = False) -> str:
 def stale(json_output: bool = False) -> str:
     """Semantic staleness detector of the OKF vault.
 
-    Evaluates 7 signals (timestamp, reads, phantom proposal, orphans,
-    commits, decision without status, description vs body) and classifies each
-    concept as STALE (3+ signals), ATTENTION (1-2) or FRESH (0).
+    Evaluates 9 signals (timestamp, reads, phantom proposal, orphans,
+    commits, decision without status, description vs body, verification
+    overdue, and «apoyo en reemplazada / muerta sin sucesora»: one signal per
+    typed edge from a live concept to a superseded or dead one, the same rule
+    `validate` warns about) and classifies each concept as STALE (3+
+    signals), ATTENTION (1-2) or FRESH (0).
 
     Read-only. Does not modify the vault. Use for weekly audit
     of concepts requiring human attention.
