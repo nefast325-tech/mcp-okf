@@ -5,6 +5,15 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
+### Licencia MIT declarada de verdad (`LICENSE`)
+
+El repo decía MIT en dos lugares y no lo probaba en ninguno: `pyproject.toml` tenía `license = { text = "MIT" }` y el README decía «MIT», pero **no había archivo `LICENSE`**, así que GitHub devolvía `licenseInfo: null` sobre `syberloop/mcp-okf` — quien clonaba o forkeaba no tenía términos, y una sección «The license» en la landing apuntando a ese repo no tenía licencia que mostrar.
+
+- **`LICENSE`** (texto MIT canónico, OSI) con titular `Syberloop — Jaime Barbudo and contributors`: el «and contributors» cubre los 42 commits de Medardo sin obligar a mantener una lista de titulares.
+- **`pyproject.toml` a PEP 639**: `license = "MIT"` (expresión SPDX) + `license-files = ["LICENSE"]` + `setuptools>=77`. El classifier legado `License :: OSI Approved :: MIT License` se quita: setuptools≥77 rechaza la combinación expresión+classifier. Verificado en el wheel: `License-Expression: MIT`, `License-File: LICENSE` y el archivo viajando en `dist-info/licenses/LICENSE` (1.101 bytes).
+- **README**: la sección License enlaza al archivo y dice qué obliga (conservar aviso y texto) y qué no (garantía), más la regla inbound = outbound para PRs.
+- **`tests/test_license.py`** (+6): LICENSE existe, es MIT canónico con saltos normalizados, tiene línea de copyright real (sin `<year>`/TODO), la licencia de `pyproject` coincide con el archivo y viaja como `license-files`, no hay classifier legado, y el README no declara otra licencia. Suite: **633**.
+
 ---
 
 ## [2026-11-01] — v0.4.33

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -11,7 +11,17 @@ description = "MCP server for OKF vaults — 20 tools for AI agents to query, cr
 # (pip show / importlib.metadata). Si esto se rompe, tests/test_version.py falla.
 requires-python = ">=3.11"
 dependencies = ["mcp[cli]>=1.0.0,<2", "pyyaml>=6.0"]
-license = { text = "MIT" }
+# PEP 639: la licencia va como expresión SPDX y el texto viaja como
+# license-files. Necesita setuptools>=77; el classifier legado
+# "License :: OSI Approved :: MIT License" ya no se permite junto a esto.
+license = "MIT"
+license-files = ["LICENSE"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
 readme = "README.md"
 dynamic = ["version"]
 

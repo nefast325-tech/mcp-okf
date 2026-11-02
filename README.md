@@ -451,7 +451,14 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE) for the full text.
+
+In short: use it, fork it, ship it commercially, embed it in a closed product.
+The only obligation is keeping the copyright notice and the license text in
+what you redistribute. No warranty.
+
+Contributions are accepted under the same license (inbound = outbound): by
+opening a PR you agree that your code ships under MIT.
 
 ## Changelog
 
