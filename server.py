@@ -648,7 +648,12 @@ def search(query: str = "", type: str = "", status: str = "", cyber_field: str =
     NOT full-text (no FTS5): each token of `query` must appear in the title,
     description or tags of the note. With body=True each token may also match
     the note body; body-only matches come after frontmatter matches, marked
-    "(cuerpo)" in the table (field match="frontmatter"|"body" in JSON).
+    "(cuerpo L<n> · <k> menc. · § <section>)" in the table (field
+    match="frontmatter"|"body" in JSON). Each body match also says WHERE:
+    `line` (file line of the first mention, same numbering as `read`, so
+    `read(slug, offset=line)` lands there), `snippet` (that line, ≤160 chars),
+    `section` (last Markdown heading before it, or null) and `matches` (how
+    many body lines mention the term). The body itself is never returned.
     Without body=True, when fewer than 5 notes match, a footer says how many
     more mention the query only in their body.
 
@@ -742,6 +747,11 @@ def read(slug: str, offset: int = 1, limit: int = 500, no_touch: bool = False) -
     confirms its relevance. NEVER use system read_file on vault .md files.
     If the concept is superseded, the first line says so and names its
     current version («♻️ … Versión vigente: <slug>»): read that one.
+    If a live concept rests on a superseded or dead one (typed edges
+    extiende/fundamenta/depende/aplica in `links:`), the output opens with
+    one «⚠️ se apoya (<edge>) en <slug>, reemplazada → vigente <slug>» line
+    per broken edge (or «cancelada (muerta, sin sucesora)»), then the body:
+    reason from the current version, not from the superseded one.
 
     Args:
         slug: Concept slug (e.g.: 'decisions/mcp-okf-cli-como-correccion-de-sesgo-de-toolset')
@@ -834,7 +844,11 @@ def health(strict: bool = False, json_output: bool = False) -> str:
     """Complete health check of the OKF vault (8 checks).
 
     Verifies: frontmatter, indexes, graph (orphans, density), broken links,
-    scripts (smoke test), git hook, cyber block, plugin↔spec sync.
+    scripts (smoke test), git hook, cyber block, plugin↔spec sync. Plus an
+    informative «Coherencia» section (`results.coherencia` in JSON): how many
+    typed edges from live concepts rest on superseded or dead ones. It does
+    not count as a warning unless the vault sets
+    `graph.coherencia_strict: true` in .okf.config.yaml.
 
     Args:
         strict: If True, exit code 1 if there are warnings
@@ -896,9 +910,12 @@ def session_metrics(json_output: bool = False) -> str:
 def stale(json_output: bool = False) -> str:
     """Semantic staleness detector of the OKF vault.
 
-    Evaluates 7 signals (timestamp, reads, phantom proposal, orphans,
-    commits, decision without status, description vs body) and classifies each
-    concept as STALE (3+ signals), ATTENTION (1-2) or FRESH (0).
+    Evaluates 9 signals (timestamp, reads, phantom proposal, orphans,
+    commits, decision without status, description vs body, verification
+    overdue, and «apoyo en reemplazada / muerta sin sucesora»: one signal per
+    typed edge from a live concept to a superseded or dead one, the same rule
+    `validate` warns about) and classifies each concept as STALE (3+
+    signals), ATTENTION (1-2) or FRESH (0).
 
     Read-only. Does not modify the vault. Use for weekly audit
     of concepts requiring human attention.
