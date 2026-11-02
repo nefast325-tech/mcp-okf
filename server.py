@@ -648,7 +648,12 @@ def search(query: str = "", type: str = "", status: str = "", cyber_field: str =
     NOT full-text (no FTS5): each token of `query` must appear in the title,
     description or tags of the note. With body=True each token may also match
     the note body; body-only matches come after frontmatter matches, marked
-    "(cuerpo)" in the table (field match="frontmatter"|"body" in JSON).
+    "(cuerpo L<n> · <k> menc. · § <section>)" in the table (field
+    match="frontmatter"|"body" in JSON). Each body match also says WHERE:
+    `line` (file line of the first mention, same numbering as `read`, so
+    `read(slug, offset=line)` lands there), `snippet` (that line, ≤160 chars),
+    `section` (last Markdown heading before it, or null) and `matches` (how
+    many body lines mention the term). The body itself is never returned.
     Without body=True, when fewer than 5 notes match, a footer says how many
     more mention the query only in their body.
 
