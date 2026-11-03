@@ -335,6 +335,25 @@ def _smoke_fields(vault, config, concept_type="Decision"):
 WRITE_SMOKE = frozenset({"new"})
 
 
+# `validate --all` es el único smoke cuyo costo crece con el vault: por cada
+# archivo lanza un `git show HEAD:<archivo>` (chequeo de encogimiento del cuerpo)
+# y vuelve a parsear el frontmatter de los destinos de sus aristas. Con un tope
+# fijo de 15 s, un vault de 326 archivos tardó 19,7 / 21,5 / 24,2 s (medido el
+# 3-nov-2026, load average ~8): `health` daba 7/8 y el pre-commit rechazaba todo
+# commit sobre un vault válido. El tope escala con el tamaño, con piso en 15 s.
+VALIDATE_SMOKE_MIN_S = 15
+VALIDATE_SMOKE_S_PER_FILE = 0.15
+
+
+def _validate_smoke_timeout(vault, config=None):
+    """Tope del smoke de `validate --all`: 0,15 s por archivo, nunca menos de 15 s."""
+    try:
+        n = len(find_md_files(Path(vault), config=config))
+    except Exception:
+        n = 0
+    return max(VALIDATE_SMOKE_MIN_S, int(n * VALIDATE_SMOKE_S_PER_FILE + 0.999))
+
+
 def _check_scripts(vault, smoke_entry_point="tp3-cibernetico", config=None):
     """Smoke test: CLI commands work (via subprocess, self-contained).
 
@@ -349,7 +368,7 @@ def _check_scripts(vault, smoke_entry_point="tp3-cibernetico", config=None):
         (["graph", "stats"], 15),
         (["search"], 10),
         (["traverse", smoke_entry_point, "--depth", "1"], 15),
-        (["validate", "--all"], 15),
+        (["validate", "--all"], _validate_smoke_timeout(vault, config)),
         (["touch", "--all"], 10),
         (["audit"], 10),
         (["review", "--count"], 10),
