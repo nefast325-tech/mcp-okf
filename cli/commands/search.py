@@ -384,7 +384,7 @@ def locate_body_match(concept, query):
     return resultado
 
 
-def find_concepts(vault):
+def find_concepts(vault, plegar_cuerpo=True):
     """Finds all concepts with frontmatter in the vault.
 
     El cuerpo (texto tras el frontmatter) se conserva en `_body`, en
@@ -422,7 +422,8 @@ def find_concepts(vault):
             "resource": str(fm.get("resource", "")),
             "timestamp": str(fm.get("timestamp", "")),
             "cyber": _sanitize_cyber(fm.get("cyber")),
-            "_body": plegar(body),
+            # Plegar 40 MB de cuerpos cuesta: solo si hay texto que buscar.
+            "_body": plegar(body) if plegar_cuerpo else "",
             "_body_raw": body,
             "_body_start": nota["cuerpo_inicio"],
         })
@@ -789,7 +790,7 @@ def run(args, vault, config=None):
             _print_todos(todos, with_aging=with_aging)
         return 0
 
-    concepts = find_concepts(vault)
+    concepts = find_concepts(vault, plegar_cuerpo=bool(query and query.strip()))
     limit = getattr(args, "limit", None)
 
     # Las reemplazadas se ocultan salvo --all-versions o --status <ese estado>.
