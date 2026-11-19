@@ -592,7 +592,7 @@ def _run(args: list[str], tool_name: str = "unknown", params: dict | None = None
 
 
 @_mcp_tool()
-def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: bool = False, json_output: bool = False, seeds: str = "", edge_type: str = "", filter: bool = False, all_versions: bool = False, compact: bool = False, budget: int = 0) -> str:
+def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: bool = False, json_output: bool = False, seeds: str = "", edge_type: str = "", filter: bool = False, all_versions: bool = False, compact: bool = False, budget: int | None = None) -> str:
     """Semantic traversal of the OKF graph. Returns concept frontmatter + neighborhood (wikilinks, backlinks, cyber.corrects).
 
     PRIMARY USE for querying the vault. Prefer over search.
@@ -623,7 +623,11 @@ def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: 
                       the replaced one.
         compact: If True, one line per node (no title, tags or score). About 4x fewer
                  tokens than the default output.
-        budget: If > 0, the output stops at that many nodes. The receipt at the end
+        budget: How many nodes to return at most. Unset: the vault's cap
+                (`traverse.budget` in .okf.config.yaml, 100 nodes by default); when
+                that cap cuts, a «✂️ … quedaron fuera» line says how many were left
+                out. 0: no cap (e.g. to list a complete set around a note that
+                hundreds of notes point to). N: stop at N. The receipt at the end
                 (`📎 recibo:` / JSON key `receipt`) says how many were reachable, the
                 bytes and the approximate tokens of the answer.
     """
@@ -660,7 +664,7 @@ def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: 
     if compact:
         args.append("--compact")
         params["compact"] = True
-    if budget and budget > 0:
+    if budget is not None and int(budget) >= 0:
         args += ["--budget", str(int(budget))]
         params["budget"] = int(budget)
     return _run(args, tool_name="okf_traverse", params=params)

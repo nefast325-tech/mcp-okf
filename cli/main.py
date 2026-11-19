@@ -138,7 +138,8 @@ def build_parser():
                              help="One line per node (no title, tags or score)")
     sp_traverse.add_argument("--budget", type=int, default=None, metavar="N",
                              help="Stop the output at N nodes (the receipt says how many "
-                                  "were reachable)")
+                                  "were reachable). Without it, the vault's traverse.budget "
+                                  "applies (100 by default); 0 = no cap")
 
     # ── graph ──
     sp_graph = subparsers.add_parser("graph", help="Analyze the wikilink graph")

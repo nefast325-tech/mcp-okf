@@ -146,6 +146,13 @@ DEFAULTS: dict[str, Any] = {
         # "off" calla. Con --base-revision siempre se comprueba.
         "base_revision": "optional",
     },
+    "traverse": {
+        # Nodos que devuelve un traverse cuando la llamada no dice cuántos.
+        # Medido el 19-nov-2026: con 131 notas los agentes nunca pasaron de 87
+        # nodos (8.700 tokens); con 10.131, una nota a la que apuntan 400
+        # devolvía más de lo que un agente puede leer de una vez. 0 = sin tope.
+        "budget": 100,
+    },
     "graph": {
         # Score semántico mínimo para aplicar sugerencias de aristas tipadas
         # (plan scoring-semantico, 2026-07-30). 0.0 = sin filtro.
@@ -478,6 +485,17 @@ class Config:
         writes = self._data.get("writes") or {}
         valor = str(writes.get("base_revision", "optional")) if isinstance(writes, dict) else "optional"
         return valor if valor in ("optional", "required", "off") else "optional"
+
+    @property
+    def traverse_budget(self) -> int:
+        """`traverse.budget`: tope de nodos cuando la llamada no pide otro. 100 por defecto; 0 = sin tope."""
+        tr = self._data.get("traverse") or {}
+        valor = tr.get("budget", 100) if isinstance(tr, dict) else 100
+        try:
+            valor = int(valor)
+        except (TypeError, ValueError):
+            return 100
+        return valor if valor >= 0 else 100
 
     @property
     def graph_inherit_default_pairs(self) -> bool:
