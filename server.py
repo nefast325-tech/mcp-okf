@@ -615,6 +615,12 @@ def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: 
         filter: If True, edge_type excludes edges not of that type (explicit exclusion).
         all_versions: If True, walks superseded notes as they are. By default a note in
                       its replaced state is skipped to its current version (corrige chain).
+                      An edge reached that way is marked «heredada»: it was declared with
+                      the replaced note named after «♻️ vigente de:», NOT with the current
+                      version shown. Do not count it as an edge the current version
+                      declares (e.g. "which notes extend X", "which accepted decisions
+                      does this system ground"); name it apart, as the current version of
+                      the replaced one.
         compact: If True, one line per node (no title, tags or score). About 4x fewer
                  tokens than the default output.
         budget: If > 0, the output stops at that many nodes. The receipt at the end

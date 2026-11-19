@@ -221,14 +221,17 @@ def run(args, vault, config=None):
     # BFS con detección de ciclos y visited set compartido entre seeds
     visited = set()
     nodes = []
-    # Queue entries: (path, depth, edge_type, from_path, seed_path, score)
+    # Queue entries: (path, depth, edge_type, from_path, seed_path, score, inherited)
+    # inherited = la arista se declaró con una nota reemplazada y el recorrido
+    # llegó a este nodo porque es su versión vigente: el nodo NO la declara.
     queue = []
 
     for seed_path in resolved_seeds:
-        queue.append((seed_path, 0, "origin", None, seed_path, 0.0))
+        queue.append((seed_path, 0, "origin", None, seed_path, 0.0, False))
 
     while queue:
-        current_path, current_depth, edge_type, from_path, seed_path, current_score = queue.pop(0)
+        (current_path, current_depth, edge_type, from_path, seed_path,
+         current_score, inherited) = queue.pop(0)
 
         if current_path in visited:
             continue
@@ -257,6 +260,11 @@ def run(args, vault, config=None):
         # Versiones reemplazadas que se saltaron para llegar a este nodo
         if current_path in skipped_versions:
             node["superseded"] = list(skipped_versions[current_path])
+        # Arista heredada: es de la nota reemplazada, no de su versión vigente.
+        # Sin esta marca, «← vigente · via extiende» se lee como si la vigente
+        # declarara la arista, y quien cuenta «qué notas extienden X» la suma.
+        if inherited:
+            node["inherited"] = True
 
         nodes.append(node)
 
@@ -304,16 +312,32 @@ def run(args, vault, config=None):
         else:
             neighbors.sort(key=lambda x: x[2], reverse=True)
 
+        candidates = []
         for neighbor_path, n_edge_type, n_score in neighbors:
             # Una vecina reemplazada se cambia por su versión vigente (salvo
             # --all-versions). La arista `corrige` hacia la reemplazada se
             # omite: llevaría de la vigente a la vieja y de vuelta.
+            n_inherited = False
             if neighbor_path in superseded_map:
                 if n_edge_type == "corrige" and superseded_map[neighbor_path] == current_path:
                     continue
                 neighbor_path = _vigente(neighbor_path)
                 if neighbor_path == current_path:
                     continue
+                n_inherited = True
+            candidates.append((neighbor_path, n_edge_type, n_score, n_inherited))
+
+        # La primera aparición fija la posición en el BFS. Si también hay una
+        # arista propia del mismo tipo, usar sus metadatos en esa posición, sin
+        # mover el nodo al lugar de la declaración (cambiaría también --budget).
+        declared = {}
+        for p, t, score, inh in candidates:
+            if not inh:
+                declared.setdefault((p, t), score)
+        for neighbor_path, n_edge_type, n_score, n_inherited in candidates:
+            if n_inherited and (neighbor_path, n_edge_type) in declared:
+                n_score = declared[(neighbor_path, n_edge_type)]
+                n_inherited = False
             if neighbor_path not in visited:
                 # Modo filtro (explícito): excluir aristas que no matchean el tipo
                 # Modo anotación (default): el superset completo siempre entra
@@ -322,7 +346,7 @@ def run(args, vault, config=None):
                         continue
                 queue.append(
                     (neighbor_path, current_depth + 1, n_edge_type,
-                     current_path, seed_path, n_score)
+                     current_path, seed_path, n_score, n_inherited)
                 )
 
     # ── Presupuesto (--budget) ──
@@ -365,9 +389,11 @@ def run(args, vault, config=None):
                 ])
         # Aristas resultantes para Cognitive Trace
         result["result_edges"] = [
-            {"from": n["from"], "to": n["path"], "type": n["edge_type"]}
+            {"from": n["from"], "to": n["path"], "type": n["edge_type"],
+             **({"inherited": True} if n.get("inherited") else {})}
             for n in nodes if n["from"] is not None
         ]
+        result["inherited"] = len([n for n in nodes if n.get("inherited")])
         if warnings:
             result["warnings"] = warnings
         # El recibo mide el JSON sin la clave receipt (no se cuenta a sí mismo).
@@ -397,6 +423,15 @@ def run(args, vault, config=None):
         _p()
         for w in warnings:
             _p(f"   ⚠️  {w}")
+
+    # ── Aristas heredadas: una línea que dice cómo leerlas ──
+    # También en --compact: no es guía de uso, es qué significa lo que sigue.
+    n_inherited = len([n for n in nodes if n.get("inherited")])
+    if n_inherited:
+        _p()
+        _p(f"   ♻️  {n_inherited} arista{'s' if n_inherited != 1 else ''} heredada{'s' if n_inherited != 1 else ''}: "
+           f"se declar{'aron' if n_inherited != 1 else 'ó'} con una nota reemplazada y acá aparece su versión vigente. "
+           "La vigente NO declara esa arista: no la cuentes como suya (--all-versions muestra las reemplazadas).")
 
     # ── Resumen ontológico (modo anotación) ──
     if edge_type_filter and not filter_mode:
@@ -471,6 +506,8 @@ def run(args, vault, config=None):
                 line += f" — {desc_c}"
             if node["from"]:
                 line += f" · via {node['edge_type']}"
+                if node.get("inherited"):
+                    line += " (heredada, no declarada por esta nota)"
             if node.get("superseded"):
                 # Abreviado: solo el nombre del archivo, sin carpeta ni .md
                 line += " · ♻️ vigente de: " + ", ".join(
@@ -487,7 +524,9 @@ def run(args, vault, config=None):
             _p(f"{indent}   🏷️  {tag_str}")
         if node["from"]:
             score_str = f" ({node.get('score', 0):.2f})" if node.get("score", 0) > 0 else ""
-            _p(f"{indent}   via {node['edge_type']}{score_str} ← {node['from']}")
+            heredada = " · heredada: la arista es de la nota reemplazada, esta no la declara" \
+                if node.get("inherited") else ""
+            _p(f"{indent}   via {node['edge_type']}{score_str} ← {node['from']}{heredada}")
         if node.get("superseded"):
             _p(f"{indent}   ♻️  vigente de: {', '.join(node['superseded'])}")
         if len(resolved_seeds) > 1 and node.get("seed"):
