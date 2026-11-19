@@ -13,7 +13,7 @@ Cubre:
 import json
 import tempfile
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -23,7 +23,12 @@ from cli.reads_store import increment_reads
 
 # Commit reciente simulado: elimina la señal "no commits" de collect_stale
 # en vaults de prueba que no son repos git (build_git_dates_index → vacío).
-_RECENT_COMMIT = "2026-09-05T12:00:00+00:00"
+# Fechas relativas a hoy: con fechas fijas el test se vencía solo. El
+# 19-nov-2026 el timestamp por defecto (20-ago) cumplió 91 días, pasó el umbral
+# de 90 y la nota sumó una señal más (ATENCION → STALE).
+_HOY = datetime.now(timezone.utc)
+_RECENT_COMMIT = (_HOY - timedelta(days=2)).isoformat(timespec="seconds")
+_RECENT_TS = (_HOY - timedelta(days=10)).strftime("%Y-%m-%dT12:00:00-05:00")
 
 
 def _concepto(vault, rel, tipo="Decision", status="aplicada",
@@ -36,7 +41,7 @@ def _concepto(vault, rel, tipo="Decision", status="aplicada",
         f"type: {tipo}",
         'title: "Concepto de prueba"',
         'description: "Concepto de prueba con descripcion larga"',
-        f"timestamp: {timestamp or '2026-08-20T12:00:00-05:00'}",
+        f"timestamp: {timestamp or _RECENT_TS}",
     ]
     if status is not None:
         fm.append(f"status: {status}")
