@@ -372,23 +372,22 @@ def find_concepts(vault):
     empieza el cuerpo) sirven para decir dónde coincidió. Son claves
     privadas: `run` las quita antes de imprimir.
     """
+    from cli.indice import notas, rel_de
+    archivos = find_md_files(vault)
+    datos = notas(vault, archivos)
     concepts = []
-    for md_file in find_md_files(vault):
-        try:
-            text = md_file.read_text(encoding="utf-8")
-        except Exception:
-            continue
-
-        fm, fm_text = parse_frontmatter(text)
+    for md_file in archivos:
+        relpath = rel_de(md_file, vault)
+        nota = datos.get(relpath)
+        fm = nota["fm"] if nota else None
         if not fm:
             continue
 
-        relpath = str(md_file.relative_to(vault))
-        parts = md_file.relative_to(vault).parts
+        parts = tuple(relpath.split("/"))
         folder = _extract_project(parts)
 
         tags = normalize_tags(fm.get("tags", []))
-        body = _body_after_frontmatter(text, fm_text)
+        body = nota["cuerpo"]
 
         concepts.append({
             "file": relpath,
@@ -403,7 +402,7 @@ def find_concepts(vault):
             "cyber": _sanitize_cyber(fm.get("cyber")),
             "_body": body.lower(),
             "_body_raw": body,
-            "_body_start": _body_first_line(text, fm_text),
+            "_body_start": nota["cuerpo_inicio"],
         })
 
     return concepts

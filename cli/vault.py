@@ -94,18 +94,27 @@ def find_md_files(vault, exclude_files=None, exclude_dirs=None, config=None):
     elif exclude_dirs is None:
         exclude_dirs = EXCLUDE_DIRS
 
-    files = []
-    for md_file in sorted(vault.rglob("*.md")):
-        if md_file.name in exclude_files:
-            continue
-        parts = md_file.relative_to(vault).parts
-        if any(p in exclude_dirs for p in parts):
-            continue
-        # Scope de subárbol (modo público): nada fuera del prefijo publicado.
-        if not under_scope(parts):
-            continue
-        files.append(md_file)
-    return files
+    # os.walk con poda en vez de rglob + relative_to por archivo: no entra a
+    # las carpetas excluidas (.git puede tener miles de archivos) y no arma
+    # un Path por cada comparación. Mismo resultado y mismo orden que
+    # `sorted(vault.rglob("*.md"))` filtrado: Path ordena por sus partes.
+    vault = Path(vault)
+    raiz = str(vault)
+    encontradas = []
+    for dirpath, dirnames, filenames in os.walk(raiz):
+        dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
+        rel_dir = os.path.relpath(dirpath, raiz)
+        base = () if rel_dir == "." else tuple(rel_dir.split(os.sep))
+        for name in filenames:
+            if not name.endswith(".md") or name in exclude_files or name in exclude_dirs:
+                continue
+            parts = base + (name,)
+            # Scope de subárbol (modo público): nada fuera del prefijo publicado.
+            if not under_scope(parts):
+                continue
+            encontradas.append(parts)
+    encontradas.sort()
+    return [vault.joinpath(*parts) for parts in encontradas]
 
 
 def build_name_index(vault, config=None):

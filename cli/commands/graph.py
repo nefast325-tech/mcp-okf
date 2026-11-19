@@ -40,18 +40,18 @@ def build_graph(vault, definitions=None):
         graph[relpath] = {"out": [], "in": [], "typed_out": [], "typed_in": [],
                           "leaf": False}
 
-    # ── Cache de frontmatter por archivo ──
+    # ── Frontmatter y enlaces por archivo, del índice local (cli/indice.py):
+    # solo se releen los archivos que cambiaron desde la última llamada ──
+    from cli.indice import notas
+    datos = notas(vault, all_files, cuerpo=False)
     fm_cache = {}
     for f in all_files:
         relpath = str(f.relative_to(vault))
-        try:
-            text = f.read_text(encoding="utf-8")
-            fm, _ = parse_frontmatter(text)
-            fm_cache[relpath] = fm if fm else {}
-            if isinstance(fm, dict) and fm.get("leaf") is True:
-                graph[relpath]["leaf"] = True
-        except Exception:
-            fm_cache[relpath] = {}
+        nota = datos.get(relpath)
+        fm = nota["fm"] if nota else None
+        fm_cache[relpath] = fm if fm else {}
+        if isinstance(fm, dict) and fm.get("leaf") is True:
+            graph[relpath]["leaf"] = True
 
     # ── Primera pasada: construir aristas ──
     typed_edges_raw = []  # (source, target, edge_type)
@@ -60,7 +60,8 @@ def build_graph(vault, definitions=None):
         relpath = str(f.relative_to(vault))
 
         # --- Wikilinks (existente) ---
-        links = extract_links(f)
+        nota = datos.get(relpath)
+        links = nota["enlaces"] if nota else []
         for target in links:
             resolved = resolve_link(target, vault, f.parent, name_index)
             if resolved and resolved in graph and resolved != relpath:
