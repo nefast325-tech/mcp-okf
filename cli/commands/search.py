@@ -460,6 +460,97 @@ def matches_query(concept, query, body=False):
     return True
 
 
+# ── Orden por relevancia y corte (19-nov-2026) ──
+#
+# Medido con 10.131 notas: las 28 búsquedas que los agentes hicieron de verdad
+# devolvían en promedio 436 notas (30.000 tokens por pregunta) en orden de
+# ruta, y la nota correcta llegó a salir en el lugar 482. Coincidir sigue
+# siendo lo mismo (cada término es subcadena, AND); lo nuevo es el orden y el
+# corte: las notas se ordenan por un BM25F sobre título, descripción, tags y
+# cuerpo, y la tabla muestra las `limit` primeras con un pie que dice cuántas
+# más hay.
+#
+# Un término cuenta entero cuando empieza una palabra y casi nada cuando cae
+# dentro de otra: «cto» está dentro de «proyecto» y de «producto», y por
+# subcadena empataba con «CTO fraccional».
+
+LIMITE = 20
+PESOS = {"title": 3.0, "description": 2.0, "tags": 2.0, "body": 1.0}
+# Largo del campo: el cuerpo se normaliza (b estándar); el título no. Medido:
+# normalizar el título sube «Luciano» y «VPS en Clouding» pero hunde las notas
+# de título largo («CRM» con 10.131 notas: del 5.º al 14.º); en total, peor.
+NORMA = {"title": 0.0, "description": 0.3, "tags": 0.0, "body": 0.75}
+K1 = 1.2
+INFIJO = 0.1
+
+
+def _terminos(query):
+    return [t for t in (query or "").lower().split() if not _es_filtro(t)]
+
+
+def _campos(c):
+    if "_campos" not in c:
+        c["_campos"] = {
+            "title": c["title"].lower(),
+            "description": c["description"].lower(),
+            "tags": " ".join(c["tags"]).lower() if isinstance(c["tags"], list) else "",
+            "body": c.get("_body", ""),
+        }
+    return c["_campos"]
+
+
+def _frecuencia(texto, termino, patron):
+    total = texto.count(termino)
+    if not total:
+        return 0.0
+    al_inicio = len(patron.findall(texto))
+    return al_inicio + INFIJO * (total - al_inicio)
+
+
+def puntuar(concepts, universo, query):
+    """Pone `_puntaje` (BM25F) a cada nota de `concepts`.
+
+    Las frecuencias de documento y los largos medios salen de `universo` (todas
+    las notas visibles), no solo de los resultados.
+    """
+    import math
+    terminos = _terminos(query)
+    if not terminos or not concepts:
+        return
+    patrones = {t: re.compile(r"(?<!\w)" + re.escape(t)) for t in terminos}
+    n = max(len(universo), 1)
+    df = {t: 0 for t in terminos}
+    largos = {campo: 0 for campo in PESOS}
+    for c in universo:
+        campos = _campos(c)
+        for campo, texto in campos.items():
+            largos[campo] += len(texto)
+        for t in terminos:
+            if any(t in texto and patrones[t].search(texto) for texto in campos.values()):
+                df[t] += 1
+    medio = {campo: max(total / n, 1.0) for campo, total in largos.items()}
+    idf = {t: math.log(1 + (n - df[t] + 0.5) / (df[t] + 0.5)) for t in terminos}
+    for c in concepts:
+        campos = _campos(c)
+        puntaje = 0.0
+        for t in terminos:
+            peso = 0.0
+            for campo, texto in campos.items():
+                tf = _frecuencia(texto, t, patrones[t])
+                if tf:
+                    b = NORMA[campo]
+                    peso += PESOS[campo] * tf / (1 - b + b * len(texto) / medio[campo])
+            puntaje += idf[t] * peso / (K1 + peso)
+        c["_puntaje"] = puntaje
+
+
+def ordenar(concepts):
+    """Por puntaje, y las que coinciden solo en el cuerpo después (el contrato de --body).
+
+    Medido: mezclar las dos por puntaje no cambió el resultado en las 26 búsquedas reales."""
+    return sorted(concepts, key=lambda c: (c.get("match") == "body", -c.get("_puntaje", 0.0), c["file"]))
+
+
 def _print_todos(todos, with_aging=False):
     """Prints pending tasks grouped by project."""
     if not todos:
@@ -655,6 +746,7 @@ def run(args, vault, config=None):
         return 0
 
     concepts = find_concepts(vault)
+    limit = getattr(args, "limit", None)
 
     # Las reemplazadas se ocultan salvo --all-versions o --status <ese estado>.
     # Se guardan aparte para contar al pie solo las que coinciden con la
@@ -670,6 +762,7 @@ def run(args, vault, config=None):
                 continue
             kept.append(c)
         concepts = kept
+    universo = concepts
     if query and query.strip():
         # Con --body, una reemplazada que coincide solo en su cuerpo también
         # cuenta: es la misma regla de recall que para las vivas.
@@ -774,8 +867,21 @@ def run(args, vault, config=None):
     if not body_mode:
         solo_cuerpo = sum(1 for c in concepts if c.get("match") == "body")
         concepts = [c for c in concepts if c.get("match") != "body"]
+
+    # Con texto en la consulta: por relevancia y cortadas a `limit` (la tabla;
+    # el JSON solo se corta si se pide --limit). Sin texto, orden de ruta y
+    # todas: un filtro por tipo o estado pide la lista completa.
+    total = len(concepts)
+    ordenadas = bool(_terminos(query))
+    if ordenadas:
+        puntuar(concepts, universo, query)
+        concepts = ordenar(concepts)
+        if limit is None and not json_out:
+            limit = LIMITE
+        if limit and limit > 0:
+            concepts = concepts[:limit]
     for c in concepts:
-        for k in ("_body", "_body_raw", "_body_start"):
+        for k in ("_body", "_body_raw", "_body_start", "_campos", "_puntaje"):
             c.pop(k, None)
         if not body_mode:
             c.pop("match", None)
@@ -784,6 +890,9 @@ def run(args, vault, config=None):
         print(json.dumps(concepts, ensure_ascii=False, indent=2))
     else:
         _print_table(concepts)
+        if ordenadas and len(concepts) < total:
+            print(f"\n(las {len(concepts)} más relevantes de {total}; hay {total - len(concepts)} más: "
+                  f"afina la consulta o pide limit=0 para verlas todas)")
         if solo_cuerpo:
             print(f"\n({solo_cuerpo} nota(s) más mencionan \"{query.strip()}\" "
                   f"en el cuerpo; --body para verlas)")

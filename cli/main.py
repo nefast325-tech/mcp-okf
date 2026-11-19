@@ -95,6 +95,9 @@ def build_parser():
                            help="Value for --cyber-field")
     sp_search.add_argument("--review-due", action="store_true", default=False,
                            help="Only concepts with cyber.review_on <= today")
+    sp_search.add_argument("--limit", type=int, default=None,
+                           help="With --query: show only the N most relevant notes "
+                                "(default 20 in the table, all in --json; 0 = all)")
     sp_search.add_argument("--since", type=str, default=None,
                            help="Filter by timestamp >= date (ISO 8601, inclusive)")
     sp_search.add_argument("--until", type=str, default=None,
