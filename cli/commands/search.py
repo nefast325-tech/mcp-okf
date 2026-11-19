@@ -791,9 +791,11 @@ def run(args, vault, config=None):
             # Cada oculta con su vigente (slugs sin .md: el trazador del
             # server tomaría un token terminado en .md como nodo resultado).
             # Con --json no se agrega nada: la salida es una lista.
-            from cli.commands.graph import build_graph
-            from cli.vigente import build_superseded_map, slug_of
-            vigentes = build_superseded_map(vault, build_graph(vault), config)
+            # Para nombrar la vigente alcanza el grafo de `corrige` (el mismo
+            # que usa `read`); el grafo entero costaba medio segundo con 10.000 notas.
+            from cli.vigente import build_superseded_map, grafo_de_corrige, slug_of
+            fm_cache = {}
+            vigentes = build_superseded_map(vault, grafo_de_corrige(vault, fm_cache), config, fm_cache)
             pares = []
             for c in hidden:
                 vigente = vigentes.get(c["file"])

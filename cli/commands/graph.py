@@ -31,22 +31,23 @@ def build_graph(vault, definitions=None):
     """
     from cli.edge_types import score_edge
 
+    from cli.indice import notas, rel_de
     all_files = find_md_files(vault)
-    name_index = {f.name: str(f.relative_to(vault)) for f in all_files}
+    rels = {f: rel_de(f, vault) for f in all_files}  # una vez: relative_to es caro por miles
+    name_index = {f.name: rels[f] for f in all_files}
     graph = {}
 
     for f in all_files:
-        relpath = str(f.relative_to(vault))
+        relpath = rels[f]
         graph[relpath] = {"out": [], "in": [], "typed_out": [], "typed_in": [],
                           "leaf": False}
 
     # ── Frontmatter y enlaces por archivo, del índice local (cli/indice.py):
     # solo se releen los archivos que cambiaron desde la última llamada ──
-    from cli.indice import notas
     datos = notas(vault, all_files, cuerpo=False)
     fm_cache = {}
     for f in all_files:
-        relpath = str(f.relative_to(vault))
+        relpath = rels[f]
         nota = datos.get(relpath)
         fm = nota["fm"] if nota else None
         fm_cache[relpath] = fm if fm else {}
@@ -57,7 +58,7 @@ def build_graph(vault, definitions=None):
     typed_edges_raw = []  # (source, target, edge_type)
 
     for f in all_files:
-        relpath = str(f.relative_to(vault))
+        relpath = rels[f]
 
         # --- Wikilinks (existente) ---
         nota = datos.get(relpath)

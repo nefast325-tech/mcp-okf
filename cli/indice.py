@@ -206,13 +206,12 @@ def _completar(vault, sellos, faltan, memo, cuerpo):
 
 def frontmatter(vault, rel):
     """Frontmatter de UNA nota: del memo del proceso si está al día, si no del archivo."""
-    vault = Path(vault)
     rel = str(rel)
-    path = vault / rel
-    entrada = _MEMO.get(str(vault), {}).get(rel)
+    path = os.path.join(str(vault), rel)
+    entrada = _MEMO.get(str(Path(vault)), {}).get(rel)
     if entrada is not None:
         try:
-            st = path.stat()
+            st = os.stat(path)
             if (st.st_mtime_ns, st.st_size) == entrada[:2] and entrada[2] is not None:
                 return entrada[2]["fm"]
         except OSError:
