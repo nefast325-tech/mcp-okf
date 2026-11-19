@@ -10,6 +10,13 @@ rule `okf stamp` enforces in the pre-commit hook.
 `--status` is checked against the vault's state schema (cli/states.py) when
 the type declares one: unknown states are rejected, and so are transitions
 the schema does not allow, unless `--force` is passed (migrations).
+
+`--base-revision` (cli/revision.py) es la «🔖 rev» que imprimió `read`: si la
+nota cambió desde entonces, no se escribe. `--body` y `--link` reemplazan
+enteros, así que sin revisión base el último que escribe borra al anterior;
+`writes.base_revision` decide si eso avisa (optional), se rechaza (required)
+o calla (off). Todo `edit` corre bajo un candado por nota, y lo que entra pasa
+por el tachado de secretos (cli/redact.py) salvo `writes.redact: false`.
 """
 
 import re
@@ -91,11 +98,31 @@ def _quote(s):
     return json.dumps(s, ensure_ascii=False)
 
 
-def _fmt_scalar(value):
+def _fmt_scalar(value, *, quote_timestamps=False):
+    """Format YAML, preserving historical plain top-level timestamp fields.
+
+    Keys and JSON container strings must keep their string type instead.
+    """
     if isinstance(value, str):
+        import yaml
         if _NUMERIC.match(value) or not _SAFE_PLAIN.match(value):
             return _quote(value)
+        # YAML 1.1 also resolves yes/on/null/dates/etc. as non-strings.
+        try:
+            parsed = yaml.safe_load(value)
+            plain_string = isinstance(parsed, str) or (
+                not quote_timestamps and isinstance(parsed, (datetime, date)))
+        except (yaml.YAMLError, ValueError):
+            plain_string = False
+        if not plain_string:
+            return _quote(value)
         return value
+    if isinstance(value, dict):
+        return "{" + ", ".join(
+            f"{_fmt_scalar(k, quote_timestamps=True)}: {_fmt_scalar(v, quote_timestamps=True)}"
+            for k, v in value.items()) + "}"
+    if isinstance(value, list):
+        return _fmt_list(value)
     if isinstance(value, (datetime, date)):
         # YAML 1.1 parsea timestamps ISO como datetime — re-serializar con
         # str() pierde la 'T' (2026-01-01 00:00:00). isoformat la preserva.
@@ -104,33 +131,28 @@ def _fmt_scalar(value):
         return "true" if value else "false"
     if value is None:
         return "null"
+    if isinstance(value, float):
+        import yaml
+        # PyYAML needs a decimal mantissa (1.0e+20), not Python's 1e+20.
+        return yaml.safe_dump(value).splitlines()[0]
     return str(value)
 
 
 def _fmt_list(items):
-    parts = []
-    for item in items:
-        if isinstance(item, str) and _SAFE_PLAIN.match(item) and not _NUMERIC.match(item):
-            parts.append(item)
-        else:
-            parts.append(_fmt_scalar(item))
-    return "[" + ", ".join(parts) + "]"
+    return "[" + ", ".join(_fmt_scalar(item, quote_timestamps=True) for item in items) + "]"
 
 
 def _fmt_nested(d, indent):
     """Serialize a nested dict (e.g. cyber block) as an indented YAML block."""
     lines = []
     for k, v in d.items():
-        if v is None:
-            continue
+        key = _fmt_scalar(k, quote_timestamps=True)
         pad = " " * indent
-        if isinstance(v, dict):
-            lines.append(f"{pad}{k}:")
+        if isinstance(v, dict) and v:
+            lines.append(f"{pad}{key}:")
             lines.extend(_fmt_nested(v, indent + 2))
-        elif isinstance(v, list):
-            lines.append(f"{pad}{k}: {_fmt_list(v)}")
         else:
-            lines.append(f"{pad}{k}: {_fmt_scalar(v)}")
+            lines.append(f"{pad}{key}: {_fmt_scalar(v, quote_timestamps=True)}")
     return lines
 
 
@@ -146,7 +168,8 @@ def _serialize(fields, links):
             continue
         if value is None:
             continue
-        if isinstance(value, dict):
+        key = _fmt_scalar(key, quote_timestamps=True)
+        if isinstance(value, dict) and value:
             lines.append(f"{key}:")
             lines.extend(_fmt_nested(value, 2))
         elif isinstance(value, list):
@@ -275,11 +298,33 @@ def run(args, vault, config=None):
         print(f"❌ Not found: {slug} (checked exact path and graph basename)", file=sys.stderr)
         return 1
 
+    # Leer, comprobar la revisión y escribir es un solo paso entre procesos.
+    from cli.revision import candado
+    with candado(vault, filepath):
+        return _editar(args, vault, config, filepath)
+
+
+def _editar(args, vault, config, filepath):
+    from cli import redact
+    from cli.revision import escribir_atomico, modo, normalizar, revision_de
+
     text = filepath.read_text(encoding="utf-8")
     fields, body = _split(text)
     if fields is None:
         print(f"❌ Invalid or missing frontmatter: {filepath}", file=sys.stderr)
         return 1
+
+    # ── revisión base: ¿la nota sigue como cuando el autor la leyó? ──
+    actual = revision_de(text)
+    base = normalizar(getattr(args, "base_revision", None))
+    if base and base != actual:
+        print(f"❌ La nota cambió desde que la leíste: está en la revisión {actual} y tu cambio parte de {base}. "
+              "No se escribió nada. Volvé a leerla (read), aplicá tu cambio sobre esa versión y pasá su revisión.",
+              file=sys.stderr)
+        return 1
+
+    # ── secretos: lo que entra se guarda sin ellos ──
+    tachados = redact.tachar_args(args) if redact.activo(config) else []
 
     concept_type = fields.get("type")
     changed = []
@@ -354,6 +399,10 @@ def run(args, vault, config=None):
             if not key:
                 print(f"❌ Invalid --field: '{spec}'. Empty key", file=sys.stderr)
                 return 1
+            if key.split(".", 1)[0] == "links":
+                print("❌ --field 'links' and its subkeys are reserved: use --link or --clear-links "
+                      "with --base-revision to replace links.", file=sys.stderr)
+                return 1
             _set_dotted(fields, key, _parse_field_value(raw_value), changed)
 
         # Esquema de campos del vault (cli/fields.py): el resultado del merge
@@ -414,6 +463,9 @@ def run(args, vault, config=None):
         except Exception as e:
             print(f"❌ Error reading body-file: {e}", file=sys.stderr)
             return 1
+        if redact.activo(config):
+            body_text, reglas = redact.tachar(body_text)
+            tachados += reglas
     if body_text is not None:
         body = f"\n{body_text.strip()}\n"
         changed.append("body")
@@ -421,6 +473,19 @@ def run(args, vault, config=None):
     if not changed:
         print(f"ℹ️  No changes requested for {filepath}")
         return 0
+
+    # ── reemplazo entero sin revisión base: el que escribe no sabe qué pisa ──
+    pisa = [nombre for nombre, toca in (("el cuerpo", body_text is not None),
+                                        ("los links", links_raw is not None or clear_links)) if toca]
+    if pisa and not base and not getattr(args, "dry_run", False):
+        que = " y ".join(pisa)
+        if modo(config) == "required":
+            print(f"❌ Reemplazar {que} exige --base-revision (la «🔖 rev» que imprime read): sin ella no se "
+                  "sabe si pisás el cambio de otro. No se escribió nada.", file=sys.stderr)
+            return 1
+        if modo(config) == "optional":
+            print(f"⚠️  Reemplazaste {que} sin --base-revision: no se comprobó si la nota había cambiado "
+                  "desde tu lectura. Pasá la «🔖 rev» de read para que un cambio ajeno no se pierda.", file=sys.stderr)
 
     # ── timestamp: refresh only when CONTENT changed (last meaningful change) ──
     # Un cambio de status, tags, aristas o campos custom no renueva la fecha:
@@ -431,6 +496,9 @@ def run(args, vault, config=None):
 
     links_out = fields.get("links") or []
     frontmatter = _serialize(fields, links_out)
+    if _split(frontmatter)[0] is None:
+        print("❌ Invalid generated frontmatter. No se escribió nada.", file=sys.stderr)
+        return 1
     # Normalize: keep a single blank line between the closing --- and the body
     body_clean = (body if body is not None else body_original) or ""
     body_clean = body_clean.strip("\n")
@@ -444,7 +512,10 @@ def run(args, vault, config=None):
         print("─" * 60)
         return 0
 
-    filepath.write_text(content, encoding="utf-8")
+    escribir_atomico(filepath, content)
     print(f"✅ Updated: {filepath}")
     print(f"   Changes: {', '.join(changed)}")
+    print(f"   🔖 rev: {revision_de(content)}")
+    if tachados:
+        print(redact.aviso(tachados))
     return 0

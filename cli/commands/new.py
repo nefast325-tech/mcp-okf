@@ -331,7 +331,8 @@ def _parse_extra_fields(field_specs):
                 file=sys.stderr,
             )
             return None
-        if isinstance(value, dict):
+        key = _fmt_scalar(key, quote_timestamps=True)
+        if isinstance(value, dict) and value:
             lines.append(f"{key}:")
             lines.extend(_fmt_nested(value, 2))
         elif isinstance(value, list):
@@ -498,6 +499,10 @@ def _build_frontmatter(concept_type, title, description, status, resource, tags,
 
 def run(args, vault, config=None):
     """Create a new concept in the vault."""
+    # Secretos (cli/redact.py): lo que entra se guarda sin ellos, y el título
+    # se tacha antes de derivar el nombre del archivo.
+    from cli import redact
+    tachados = redact.tachar_args(args) if redact.activo(config) else []
     concept_type = getattr(args, "concept_type", None)
     title = getattr(args, "title", None)
     description = getattr(args, "description", None)
@@ -704,12 +709,19 @@ def run(args, vault, config=None):
                                      links=parsed_links, config=config,
                                      omit_timestamps=omit_timestamps,
                                      extra_lines=extra_lines)
+    from cli.commands.edit import _split
+    if _split(frontmatter)[0] is None:
+        print("❌ Invalid generated frontmatter. No se escribió nada.", file=sys.stderr)
+        return 1
     if body_file:
         try:
             body_text = Path(body_file).read_text(encoding="utf-8")
         except Exception as e:
             print(f"❌ Error reading body-file: {e}", file=sys.stderr)
             return 1
+        if redact.activo(config):
+            body_text, reglas = redact.tachar(body_text)
+            tachados += reglas
     if body_text:
         body = f"\n{body_text.strip()}\n"
     else:
@@ -731,5 +743,9 @@ def run(args, vault, config=None):
     print(f"   Type: {concept_type} | Status: {status or '(no status)'}")
     if cyber and concept_type in (set(config.types_cyber) if config else CYBER_TYPES):
         print(f"   🧠 Cyber block: included (outcome: pending, review_on: +{config.cyber_review_days if config else 14}d)")
+    from cli.revision import revision_de
+    print(f"   🔖 rev: {revision_de(content)}")
+    if tachados:
+        print(redact.aviso(tachados))
     print(f"\n   Next step: edit body and commit.")
     return 0
