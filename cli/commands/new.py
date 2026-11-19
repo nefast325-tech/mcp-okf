@@ -331,7 +331,8 @@ def _parse_extra_fields(field_specs):
                 file=sys.stderr,
             )
             return None
-        if isinstance(value, dict):
+        key = _fmt_scalar(key, quote_timestamps=True)
+        if isinstance(value, dict) and value:
             lines.append(f"{key}:")
             lines.extend(_fmt_nested(value, 2))
         elif isinstance(value, list):
@@ -708,6 +709,10 @@ def run(args, vault, config=None):
                                      links=parsed_links, config=config,
                                      omit_timestamps=omit_timestamps,
                                      extra_lines=extra_lines)
+    from cli.commands.edit import _split
+    if _split(frontmatter)[0] is None:
+        print("❌ Invalid generated frontmatter. No se escribió nada.", file=sys.stderr)
+        return 1
     if body_file:
         try:
             body_text = Path(body_file).read_text(encoding="utf-8")

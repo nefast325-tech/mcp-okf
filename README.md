@@ -307,10 +307,18 @@ sets what happens when body or links are replaced without it: `optional`
 status and tag edits merge and never need it. Every `edit` runs under a
 per-note lock and writes atomically.
 
+`links` and its subkeys are reserved in `edit --field` / MCP `fields`, just
+as `new --field links=...` is reserved. Use `--link` / `links` to replace them
+or `--clear-links` / `clear_links` to remove them. This keeps every link edit
+on the same target/type validation and base-revision path; custom metadata
+still merges without a base revision.
+
 `new` and `edit` do not store secrets: API keys, tokens, private keys,
 credentials in URLs and passwords they recognise are replaced by
 «[secreto tachado]» in the note and in the trace, and the output says how many
-and which rule. `writes.redact: false` turns it off.
+and which rule. `writes.redact: false` turns off redaction in notes, not in
+the trace. Trace body previews remain limited to 100 characters (plus `...`),
+after detecting and redacting secrets in the complete body.
 
 ### `okf board` — the vault as a read-only board
 

@@ -98,11 +98,31 @@ def _quote(s):
     return json.dumps(s, ensure_ascii=False)
 
 
-def _fmt_scalar(value):
+def _fmt_scalar(value, *, quote_timestamps=False):
+    """Format YAML, preserving historical plain top-level timestamp fields.
+
+    Keys and JSON container strings must keep their string type instead.
+    """
     if isinstance(value, str):
+        import yaml
         if _NUMERIC.match(value) or not _SAFE_PLAIN.match(value):
             return _quote(value)
+        # YAML 1.1 also resolves yes/on/null/dates/etc. as non-strings.
+        try:
+            parsed = yaml.safe_load(value)
+            plain_string = isinstance(parsed, str) or (
+                not quote_timestamps and isinstance(parsed, (datetime, date)))
+        except (yaml.YAMLError, ValueError):
+            plain_string = False
+        if not plain_string:
+            return _quote(value)
         return value
+    if isinstance(value, dict):
+        return "{" + ", ".join(
+            f"{_fmt_scalar(k, quote_timestamps=True)}: {_fmt_scalar(v, quote_timestamps=True)}"
+            for k, v in value.items()) + "}"
+    if isinstance(value, list):
+        return _fmt_list(value)
     if isinstance(value, (datetime, date)):
         # YAML 1.1 parsea timestamps ISO como datetime — re-serializar con
         # str() pierde la 'T' (2026-01-01 00:00:00). isoformat la preserva.
@@ -111,33 +131,28 @@ def _fmt_scalar(value):
         return "true" if value else "false"
     if value is None:
         return "null"
+    if isinstance(value, float):
+        import yaml
+        # PyYAML needs a decimal mantissa (1.0e+20), not Python's 1e+20.
+        return yaml.safe_dump(value).splitlines()[0]
     return str(value)
 
 
 def _fmt_list(items):
-    parts = []
-    for item in items:
-        if isinstance(item, str) and _SAFE_PLAIN.match(item) and not _NUMERIC.match(item):
-            parts.append(item)
-        else:
-            parts.append(_fmt_scalar(item))
-    return "[" + ", ".join(parts) + "]"
+    return "[" + ", ".join(_fmt_scalar(item, quote_timestamps=True) for item in items) + "]"
 
 
 def _fmt_nested(d, indent):
     """Serialize a nested dict (e.g. cyber block) as an indented YAML block."""
     lines = []
     for k, v in d.items():
-        if v is None:
-            continue
+        key = _fmt_scalar(k, quote_timestamps=True)
         pad = " " * indent
-        if isinstance(v, dict):
-            lines.append(f"{pad}{k}:")
+        if isinstance(v, dict) and v:
+            lines.append(f"{pad}{key}:")
             lines.extend(_fmt_nested(v, indent + 2))
-        elif isinstance(v, list):
-            lines.append(f"{pad}{k}: {_fmt_list(v)}")
         else:
-            lines.append(f"{pad}{k}: {_fmt_scalar(v)}")
+            lines.append(f"{pad}{key}: {_fmt_scalar(v, quote_timestamps=True)}")
     return lines
 
 
@@ -153,7 +168,8 @@ def _serialize(fields, links):
             continue
         if value is None:
             continue
-        if isinstance(value, dict):
+        key = _fmt_scalar(key, quote_timestamps=True)
+        if isinstance(value, dict) and value:
             lines.append(f"{key}:")
             lines.extend(_fmt_nested(value, 2))
         elif isinstance(value, list):
@@ -383,6 +399,10 @@ def _editar(args, vault, config, filepath):
             if not key:
                 print(f"❌ Invalid --field: '{spec}'. Empty key", file=sys.stderr)
                 return 1
+            if key.split(".", 1)[0] == "links":
+                print("❌ --field 'links' and its subkeys are reserved: use --link or --clear-links "
+                      "with --base-revision to replace links.", file=sys.stderr)
+                return 1
             _set_dotted(fields, key, _parse_field_value(raw_value), changed)
 
         # Esquema de campos del vault (cli/fields.py): el resultado del merge
@@ -476,6 +496,9 @@ def _editar(args, vault, config, filepath):
 
     links_out = fields.get("links") or []
     frontmatter = _serialize(fields, links_out)
+    if _split(frontmatter)[0] is None:
+        print("❌ Invalid generated frontmatter. No se escribió nada.", file=sys.stderr)
+        return 1
     # Normalize: keep a single blank line between the closing --- and the body
     body_clean = (body if body is not None else body_original) or ""
     body_clean = body_clean.strip("\n")

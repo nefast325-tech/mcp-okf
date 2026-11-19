@@ -506,6 +506,11 @@ def _finish_event(tool_name: str, params: dict, result: "subprocess.CompletedPro
     """Extracts result_nodes and persists the event to SQLite + JSONL."""
     if tool_name in ("okf_new", "okf_edit"):
         params = _sin_secretos(params)
+        # Detect on the complete input: a preview can cut a credential below
+        # its minimum match length. Only the trace is shortened, never CLI args.
+        body = params.get("body")
+        if isinstance(body, str):
+            params["body"] = body[:100] + "..." if len(body) > 100 else body
     if tool_name == "okf_new":
         created_path = _extract_created_path(result)
         if created_path:
@@ -1013,7 +1018,7 @@ def new(type: str, title: str = "", description: str = "", tags: str = "", statu
     return _run(args, tool_name="okf_new", params={
         "type": type, "title": title, "description": description,
         "tags": tags, "status": status, "cyber": cyber, "dry_run": dry_run,
-        "body": body[:100] + "..." if len(body) > 100 else body,
+        "body": body,
         "links": links if links else None,
         "filename": filename if filename else None,
         "fields": fields if fields else None,
@@ -1060,6 +1065,7 @@ def edit(slug: str, title: str = "", description: str = "", tags: str = "",
         fields: List of custom frontmatter fields 'key=value' (repeatable).
                Dotted keys set nested blocks (repo_state.commit=abc).
                JSON for lists/dicts; empty value deletes the field.
+               links and its subkeys are reserved: use links/clear_links.
         clear_links: If True, removes all typed links
         dry_run: If True, previews the result without writing
         base_revision: The «🔖 rev» printed by `read`. If the note is no longer
@@ -1096,7 +1102,7 @@ def edit(slug: str, title: str = "", description: str = "", tags: str = "",
     return _run(args, tool_name="okf_edit", params={
         "slug": slug, "title": title, "description": description,
         "tags": tags, "status": status, "resource": resource,
-        "body": body[:100] + "..." if len(body) > 100 else body,
+        "body": body,
         "links": links if links else None, "clear_links": clear_links,
         "dry_run": dry_run, "base_revision": base_revision if base_revision else None,
     })
