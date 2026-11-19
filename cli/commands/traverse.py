@@ -327,12 +327,17 @@ def run(args, vault, config=None):
                 n_inherited = True
             candidates.append((neighbor_path, n_edge_type, n_score, n_inherited))
 
-        # Si la vigente tiene además una arista propia del mismo tipo con este
-        # nodo, manda la declarada: la heredada de su versión vieja no se encola.
-        declared = {(p, t) for p, t, _, inh in candidates if not inh}
+        # La primera aparición fija la posición en el BFS. Si también hay una
+        # arista propia del mismo tipo, usar sus metadatos en esa posición, sin
+        # mover el nodo al lugar de la declaración (cambiaría también --budget).
+        declared = {}
+        for p, t, score, inh in candidates:
+            if not inh:
+                declared.setdefault((p, t), score)
         for neighbor_path, n_edge_type, n_score, n_inherited in candidates:
             if n_inherited and (neighbor_path, n_edge_type) in declared:
-                continue
+                n_score = declared[(neighbor_path, n_edge_type)]
+                n_inherited = False
             if neighbor_path not in visited:
                 # Modo filtro (explícito): excluir aristas que no matchean el tipo
                 # Modo anotación (default): el superset completo siempre entra
