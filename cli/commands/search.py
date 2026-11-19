@@ -23,6 +23,25 @@ from cli.vault import find_md_files, get_scope
 from cli.frontmatter import parse_frontmatter, normalize_tags
 
 
+def _tabla_plegado():
+    import unicodedata
+    tabla = {}
+    for cp in range(0xC0, 0x250):
+        ch = chr(cp)
+        base = "".join(c for c in unicodedata.normalize("NFKD", ch) if not unicodedata.combining(c))
+        if base != ch and base.isascii() and base:
+            tabla[cp] = base.lower()
+    return tabla
+
+
+_PLEGADO = _tabla_plegado()
+
+
+def plegar(texto):
+    """Minúsculas y sin tildes: «Página» y «pagina» coinciden. ñ → n."""
+    return texto.lower().translate(_PLEGADO)
+
+
 def _is_valid_frontmatter_key(key):
     return bool(key) and not str(key).startswith("#") and not str(key).startswith("- ")
 
@@ -301,12 +320,14 @@ def _es_filtro(token):
 
 
 def _fm_searchable(concept):
-    """Título, descripción y tags en minúsculas: lo que busca `search` sin --body."""
-    return " ".join([
-        concept["title"],
-        concept["description"],
-        " ".join(concept["tags"]) if isinstance(concept["tags"], list) else "",
-    ]).lower()
+    """Título, descripción y tags en minúsculas y sin tildes: lo que busca `search` sin --body."""
+    if "_fm" not in concept:
+        concept["_fm"] = plegar(" ".join([
+            concept["title"],
+            concept["description"],
+            " ".join(concept["tags"]) if isinstance(concept["tags"], list) else "",
+        ]))
+    return concept["_fm"]
 
 
 def locate_body_match(concept, query):
@@ -328,7 +349,7 @@ def locate_body_match(concept, query):
     Los `#` dentro de un bloque de código no son encabezados.
     """
     fm = _fm_searchable(concept)
-    tokens = [t for t in query.lower().split() if not _es_filtro(t)]
+    tokens = [plegar(t) for t in query.lower().split() if not _es_filtro(t)]
     terminos = [t for t in tokens if t not in fm] or tokens
     resultado = {"line": None, "snippet": "", "section": None, "matches": 0}
     if not terminos:
@@ -345,7 +366,7 @@ def locate_body_match(concept, query):
             m = _HEADING_RE.match(linea)
             if m:
                 seccion = m.group(2).strip() or None
-        baja = linea.lower()
+        baja = plegar(linea)
         posiciones = [(baja.find(t), len(t)) for t in terminos if t in baja]
         if not posiciones:
             continue
@@ -355,8 +376,9 @@ def locate_body_match(concept, query):
             # La posición se busca sobre la línea normalizada (sin tabs ni
             # dobles espacios) para que el centrado del fragmento sea exacto.
             plana = " ".join(linea.split())
-            pos, largo = min((plana.lower().find(t), len(t))
-                             for t in terminos if t in plana.lower())
+            plana_plegada = plegar(plana)
+            pos, largo = min((plana_plegada.find(t), len(t))
+                             for t in terminos if t in plana_plegada)
             resultado["snippet"] = _snippet(plana, pos, largo)
             resultado["section"] = _recortar(seccion, SECTION_MAX) if seccion else None
     return resultado
@@ -400,7 +422,7 @@ def find_concepts(vault):
             "resource": str(fm.get("resource", "")),
             "timestamp": str(fm.get("timestamp", "")),
             "cyber": _sanitize_cyber(fm.get("cyber")),
-            "_body": body.lower(),
+            "_body": plegar(body),
             "_body_raw": body,
             "_body_start": nota["cuerpo_inicio"],
         })
@@ -454,7 +476,7 @@ def matches_query(concept, query, body=False):
                     return False
                 continue
 
-        if token not in searchable:
+        if plegar(token) not in searchable:
             return False
 
     return True
@@ -486,15 +508,15 @@ INFIJO = 0.1
 
 
 def _terminos(query):
-    return [t for t in (query or "").lower().split() if not _es_filtro(t)]
+    return [plegar(t) for t in (query or "").lower().split() if not _es_filtro(t)]
 
 
 def _campos(c):
     if "_campos" not in c:
         c["_campos"] = {
-            "title": c["title"].lower(),
-            "description": c["description"].lower(),
-            "tags": " ".join(c["tags"]).lower() if isinstance(c["tags"], list) else "",
+            "title": plegar(c["title"]),
+            "description": plegar(c["description"]),
+            "tags": plegar(" ".join(c["tags"])) if isinstance(c["tags"], list) else "",
             "body": c.get("_body", ""),
         }
     return c["_campos"]
@@ -543,6 +565,25 @@ def puntuar(concepts, universo, query):
                     peso += PESOS[campo] * tf / (1 - b + b * len(texto) / medio[campo])
             puntaje += idf[t] * peso / (K1 + peso)
         c["_puntaje"] = puntaje
+
+
+def _parciales(universo, ya, terminos, body_mode, filter_type):
+    """Notas con al menos la mitad de las palabras (no todas), marcadas `partial`."""
+    vistas = {c["file"] for c in ya}
+    minimo = (len(terminos) + 1) // 2
+    salida = []
+    for c in universo:
+        if c["file"] in vistas:
+            continue
+        if filter_type and c["type"].lower() != filter_type.lower():
+            continue
+        texto = _fm_searchable(c) + (" " + c.get("_body", "") if body_mode else "")
+        tiene = sum(1 for t in terminos if t in texto)
+        if minimo <= tiene < len(terminos):
+            c["match"] = "partial"
+            c["terms_matched"] = f"{tiene}/{len(terminos)}"
+            salida.append(c)
+    return salida
 
 
 def ordenar(concepts):
@@ -643,6 +684,8 @@ def _print_table(concepts):
 
     for c in concepts:
         desc = c["description"][:80]
+        if c.get("match") == "partial":
+            desc += f"  (parcial: {c['terms_matched']} palabras)"
         if c.get("match") == "body":
             # Coincidió solo en el cuerpo: decir dónde (línea como la numera
             # `read`), cuánto (líneas que mencionan) y bajo qué encabezado.
@@ -874,24 +917,35 @@ def run(args, vault, config=None):
     # todas: un filtro por tipo o estado pide la lista completa.
     total = len(concepts)
     ordenadas = bool(_terminos(query))
+    parciales = []
     if ordenadas:
-        puntuar(concepts, universo, query)
-        concepts = ordenar(concepts)
         if limit is None and not json_out:
             limit = LIMITE
+        puntuar(concepts, universo, query)
+        concepts = ordenar(concepts)
+        terminos = _terminos(query)
+        if (len(terminos) > 1 and limit and limit > 0 and len(concepts) < limit
+                and not (filter_status or cyber_field or review_due or since or until)):
+            parciales = _parciales(universo, concepts, terminos, body_mode, filter_type)
+            puntuar(parciales, universo, query)
+            parciales = ordenar(parciales)[:limit - len(concepts)]
+            concepts = concepts + parciales
         if limit and limit > 0:
             concepts = concepts[:limit]
     for c in concepts:
-        for k in ("_body", "_body_raw", "_body_start", "_campos", "_puntaje"):
+        for k in ("_body", "_body_raw", "_body_start", "_campos", "_puntaje", "_fm"):
             c.pop(k, None)
-        if not body_mode:
+        if not body_mode and c.get("match") != "partial":
             c.pop("match", None)
 
     if json_out:
         print(json.dumps(concepts, ensure_ascii=False, indent=2))
     else:
         _print_table(concepts)
-        if ordenadas and len(concepts) < total:
+        if parciales:
+            print(f"\n({total} nota(s) con todas las palabras; se completó con {len(parciales)} "
+                  f"que tienen algunas, marcadas «parcial»)")
+        if ordenadas and len(concepts) - len(parciales) < total:
             print(f"\n(las {len(concepts)} más relevantes de {total}; hay {total - len(concepts)} más: "
                   f"afina la consulta o pide limit=0 para verlas todas)")
         if solo_cuerpo:
