@@ -10,6 +10,13 @@ rule `okf stamp` enforces in the pre-commit hook.
 `--status` is checked against the vault's state schema (cli/states.py) when
 the type declares one: unknown states are rejected, and so are transitions
 the schema does not allow, unless `--force` is passed (migrations).
+
+`--base-revision` (cli/revision.py) es la «🔖 rev» que imprimió `read`: si la
+nota cambió desde entonces, no se escribe. `--body` y `--link` reemplazan
+enteros, así que sin revisión base el último que escribe borra al anterior;
+`writes.base_revision` decide si eso avisa (optional), se rechaza (required)
+o calla (off). Todo `edit` corre bajo un candado por nota, y lo que entra pasa
+por el tachado de secretos (cli/redact.py) salvo `writes.redact: false`.
 """
 
 import re
@@ -275,11 +282,33 @@ def run(args, vault, config=None):
         print(f"❌ Not found: {slug} (checked exact path and graph basename)", file=sys.stderr)
         return 1
 
+    # Leer, comprobar la revisión y escribir es un solo paso entre procesos.
+    from cli.revision import candado
+    with candado(vault, filepath):
+        return _editar(args, vault, config, filepath)
+
+
+def _editar(args, vault, config, filepath):
+    from cli import redact
+    from cli.revision import escribir_atomico, modo, normalizar, revision_de
+
     text = filepath.read_text(encoding="utf-8")
     fields, body = _split(text)
     if fields is None:
         print(f"❌ Invalid or missing frontmatter: {filepath}", file=sys.stderr)
         return 1
+
+    # ── revisión base: ¿la nota sigue como cuando el autor la leyó? ──
+    actual = revision_de(text)
+    base = normalizar(getattr(args, "base_revision", None))
+    if base and base != actual:
+        print(f"❌ La nota cambió desde que la leíste: está en la revisión {actual} y tu cambio parte de {base}. "
+              "No se escribió nada. Volvé a leerla (read), aplicá tu cambio sobre esa versión y pasá su revisión.",
+              file=sys.stderr)
+        return 1
+
+    # ── secretos: lo que entra se guarda sin ellos ──
+    tachados = redact.tachar_args(args) if redact.activo(config) else []
 
     concept_type = fields.get("type")
     changed = []
@@ -414,6 +443,9 @@ def run(args, vault, config=None):
         except Exception as e:
             print(f"❌ Error reading body-file: {e}", file=sys.stderr)
             return 1
+        if redact.activo(config):
+            body_text, reglas = redact.tachar(body_text)
+            tachados += reglas
     if body_text is not None:
         body = f"\n{body_text.strip()}\n"
         changed.append("body")
@@ -421,6 +453,19 @@ def run(args, vault, config=None):
     if not changed:
         print(f"ℹ️  No changes requested for {filepath}")
         return 0
+
+    # ── reemplazo entero sin revisión base: el que escribe no sabe qué pisa ──
+    pisa = [nombre for nombre, toca in (("el cuerpo", body_text is not None),
+                                        ("los links", links_raw is not None or clear_links)) if toca]
+    if pisa and not base and not getattr(args, "dry_run", False):
+        que = " y ".join(pisa)
+        if modo(config) == "required":
+            print(f"❌ Reemplazar {que} exige --base-revision (la «🔖 rev» que imprime read): sin ella no se "
+                  "sabe si pisás el cambio de otro. No se escribió nada.", file=sys.stderr)
+            return 1
+        if modo(config) == "optional":
+            print(f"⚠️  Reemplazaste {que} sin --base-revision: no se comprobó si la nota había cambiado "
+                  "desde tu lectura. Pasá la «🔖 rev» de read para que un cambio ajeno no se pierda.", file=sys.stderr)
 
     # ── timestamp: refresh only when CONTENT changed (last meaningful change) ──
     # Un cambio de status, tags, aristas o campos custom no renueva la fecha:
@@ -444,7 +489,10 @@ def run(args, vault, config=None):
         print("─" * 60)
         return 0
 
-    filepath.write_text(content, encoding="utf-8")
+    escribir_atomico(filepath, content)
     print(f"✅ Updated: {filepath}")
     print(f"   Changes: {', '.join(changed)}")
+    print(f"   🔖 rev: {revision_de(content)}")
+    if tachados:
+        print(redact.aviso(tachados))
     return 0

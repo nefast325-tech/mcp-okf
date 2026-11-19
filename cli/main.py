@@ -243,6 +243,10 @@ def build_parser():
                          help="Custom frontmatter field 'key=value' (repeatable). "
                               "Dotted keys set nested blocks (repo_state.commit=abc). "
                               "JSON for lists/dicts; empty value deletes the field")
+    sp_edit.add_argument("--base-revision", dest="base_revision", default=None,
+                         help="The '🔖 rev' printed by `read`. If the note changed since, "
+                              "nothing is written: re-read and re-apply. Pass it whenever "
+                              "you replace --body or --link")
     sp_edit.add_argument("--dry-run", action="store_true", default=False,
                          help="Preview without writing")
     sp_edit.add_argument("--force", action="store_true", default=False,

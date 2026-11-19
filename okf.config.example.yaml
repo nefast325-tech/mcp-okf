@@ -144,6 +144,14 @@ cyber:
   review_days: 14
 
 # ── Health Check ─────────────────────────────────────────────
+# ── Escritura: secretos y choques entre agentes ──
+# writes:
+#   redact: true              # new/edit guardan «[secreto tachado]» en lugar de una
+#                             # llave, token o contraseña reconocidos. false = como llega.
+#   base_revision: optional   # qué hace `edit` al reemplazar cuerpo o links sin la
+#                             # «🔖 rev» de `read`: optional avisa, required no escribe,
+#                             # off calla. Con varios agentes sobre la misma carpeta: required.
+
 health:
   # Slug of a concept that exists in your vault. The health check
   # uses it to verify that okf_traverse and okf_read work.

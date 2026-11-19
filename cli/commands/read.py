@@ -109,7 +109,13 @@ def run(args, vault, config=None):
 
     # Imprimir contenido
     print(f"─── {rel} ({filepath.stat().st_size} bytes) ───", file=sys.stderr)
-    lines = filepath.read_text(encoding="utf-8").split("\n")
+    texto = filepath.read_text(encoding="utf-8")
+    # La revisión es lo que `edit` pide en --base-revision para no pisar un
+    # cambio hecho después de esta lectura. Va a stderr, con la cabecera: una
+    # nota limpia no agrega ni un byte a stdout (el MCP devuelve los dos).
+    from cli.revision import revision_de
+    print(f"🔖 rev: {revision_de(texto)}", file=sys.stderr)
+    lines = texto.split("\n")
     total = len(lines)
     start = max(0, offset - 1)
     end = min(total, start + limit)

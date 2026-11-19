@@ -489,9 +489,23 @@ def _parse_graph_output(stdout: str, args: list[str]) -> list[str]:
     return paths
 
 
+def _sin_secretos(valor):
+    """Los parámetros que van a la traza, con los secretos tachados (cli/redact.py)."""
+    from cli.redact import tachar
+    if isinstance(valor, str):
+        return tachar(valor)[0]
+    if isinstance(valor, dict):
+        return {k: _sin_secretos(v) for k, v in valor.items()}
+    if isinstance(valor, list):
+        return [_sin_secretos(v) for v in valor]
+    return valor
+
+
 def _finish_event(tool_name: str, params: dict, result: "subprocess.CompletedProcess",
                   duration_ms: int, args: list[str]) -> None:
     """Extracts result_nodes and persists the event to SQLite + JSONL."""
+    if tool_name in ("okf_new", "okf_edit"):
+        params = _sin_secretos(params)
     if tool_name == "okf_new":
         created_path = _extract_created_path(result)
         if created_path:
@@ -752,6 +766,9 @@ def read(slug: str, offset: int = 1, limit: int = 500, no_touch: bool = False) -
     one «⚠️ se apoya (<edge>) en <slug>, reemplazada → vigente <slug>» line
     per broken edge (or «cancelada (muerta, sin sucesora)»), then the body:
     reason from the current version, not from the superseded one.
+    The output ends with «🔖 rev: <hex>» (under [stderr]): the note's
+    revision. Pass it as `base_revision` to `edit` when you replace its body
+    or links.
 
     Args:
         slug: Concept slug (e.g.: 'decisions/mcp-okf-cli-como-correccion-de-sesgo-de-toolset')
@@ -935,6 +952,9 @@ def new(type: str, title: str = "", description: str = "", tags: str = "", statu
 
     ALWAYS use this instead of write_file to create concepts.
 
+    Secrets are not stored: API keys, tokens, private keys and passwords found
+    in what you pass are replaced by «[secreto tachado]» and the output says so.
+
     Args:
         type: Concept type (Decision, Plan, Project, Insight, MarcoTeorico, etc.)
         title: Descriptive title (optional when filename is given; if omitted,
@@ -1004,7 +1024,8 @@ def new(type: str, title: str = "", description: str = "", tags: str = "", statu
 @_mcp_tool()
 def edit(slug: str, title: str = "", description: str = "", tags: str = "",
          status: str = "", resource: str = "", body: str = "", links: str = "",
-         fields: list | None = None, clear_links: bool = False, dry_run: bool = False) -> str:
+         fields: list | None = None, clear_links: bool = False, dry_run: bool = False,
+         base_revision: str = "") -> str:
     """Updates an existing concept in the OKF vault (merge semantics).
 
     The ONLY canonical way to update a concept. `new` is create-only and
@@ -1014,6 +1035,16 @@ def edit(slug: str, title: str = "", description: str = "", tags: str = "",
     (type, created, cyber block, custom fields, existing links) is preserved.
     The frontmatter `timestamp` is always refreshed on a real change — it
     represents the last meaningful edit (OKF v0.1 standard).
+
+    `body` and `links` REPLACE what the note has. Another agent may have
+    edited it after you read it: pass `base_revision` (the «🔖 rev» line of
+    `read`) and the write is refused if the note changed — re-read, re-apply
+    your change on the current version, and send its revision. Without it the
+    last writer silently erases the previous one. Field, status and tag edits
+    merge and do not need it.
+
+    Secrets are not stored: API keys, tokens, private keys and passwords found
+    in what you pass are replaced by «[secreto tachado]» and the output says so.
 
     Args:
         slug: Concept path (e.g. 'decisions/mi-decision', 'mi-decision.md',
@@ -1031,6 +1062,9 @@ def edit(slug: str, title: str = "", description: str = "", tags: str = "",
                JSON for lists/dicts; empty value deletes the field.
         clear_links: If True, removes all typed links
         dry_run: If True, previews the result without writing
+        base_revision: The «🔖 rev» printed by `read`. If the note is no longer
+               at that revision, nothing is written. Pass it whenever you
+               replace `body` or `links`.
     """
     args = ["edit", slug]
     if title:
@@ -1057,12 +1091,14 @@ def edit(slug: str, title: str = "", description: str = "", tags: str = "",
         args.append("--clear-links")
     if dry_run:
         args.append("--dry-run")
+    if base_revision:
+        args += ["--base-revision", base_revision]
     return _run(args, tool_name="okf_edit", params={
         "slug": slug, "title": title, "description": description,
         "tags": tags, "status": status, "resource": resource,
         "body": body[:100] + "..." if len(body) > 100 else body,
         "links": links if links else None, "clear_links": clear_links,
-        "dry_run": dry_run,
+        "dry_run": dry_run, "base_revision": base_revision if base_revision else None,
     })
 
 

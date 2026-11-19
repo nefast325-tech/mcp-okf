@@ -137,6 +137,15 @@ DEFAULTS: dict[str, Any] = {
     "health": {
         "smoke_entry_point": "tp3-cibernetico",
     },
+    "writes": {
+        # new/edit tachan los secretos que reconocen (cli/redact.py) antes de
+        # guardar. false = se guarda lo que llega, como antes.
+        "redact": True,
+        # Qué hace `edit` al reemplazar el cuerpo o los links sin
+        # --base-revision: "optional" avisa y escribe, "required" no escribe,
+        # "off" calla. Con --base-revision siempre se comprueba.
+        "base_revision": "optional",
+    },
     "graph": {
         # Score semántico mínimo para aplicar sugerencias de aristas tipadas
         # (plan scoring-semantico, 2026-07-30). 0.0 = sin filtro.
@@ -456,6 +465,19 @@ class Config:
         """`graph.coherencia_strict`: si los apoyos en reemplazadas o muertas
         cuentan como warning en `health --strict`. False por defecto."""
         return bool(self._data["graph"].get("coherencia_strict", False))
+
+    @property
+    def writes_redact(self) -> bool:
+        """`writes.redact`: new/edit tachan secretos antes de guardar. True por defecto."""
+        writes = self._data.get("writes") or {}
+        return bool(writes.get("redact", True)) if isinstance(writes, dict) else True
+
+    @property
+    def writes_base_revision(self) -> str:
+        """`writes.base_revision`: optional (por defecto), required u off."""
+        writes = self._data.get("writes") or {}
+        valor = str(writes.get("base_revision", "optional")) if isinstance(writes, dict) else "optional"
+        return valor if valor in ("optional", "required", "off") else "optional"
 
     @property
     def graph_inherit_default_pairs(self) -> bool:

@@ -296,6 +296,22 @@ use one vault's vocabulary) so the vault declares every pair it uses in
 `edge_types.<type>.valid_pairs`; an edge type with no declared pairs is
 unrestricted, as `corrige` always was.
 
+### Writes: base revision and secret redaction
+
+`edit --body` and `edit --link` replace what the note has. `read` prints the
+note's revision («🔖 rev: 3fa9c1d2e4b7», on stderr with the header); pass it to
+`edit --base-revision` (`base_revision` in the MCP tool) and the write is
+refused if the note changed since — re-read and re-apply. `writes.base_revision`
+sets what happens when body or links are replaced without it: `optional`
+(default) writes and warns, `required` refuses, `off` stays silent. Field,
+status and tag edits merge and never need it. Every `edit` runs under a
+per-note lock and writes atomically.
+
+`new` and `edit` do not store secrets: API keys, tokens, private keys,
+credentials in URLs and passwords they recognise are replaced by
+«[secreto tachado]» in the note and in the trace, and the output says how many
+and which rule. `writes.redact: false` turns it off.
+
 ### `okf board` — the vault as a read-only board
 
 `okf board` writes one JSON with the vault as a board: `columnas` (the
