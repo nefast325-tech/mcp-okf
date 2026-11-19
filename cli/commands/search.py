@@ -477,8 +477,9 @@ def matches_query(concept, query, body=False):
 LIMITE = 20
 PESOS = {"title": 3.0, "description": 2.0, "tags": 2.0, "body": 1.0}
 # Largo del campo: el cuerpo se normaliza (b estándar); el título no. Medido:
-# normalizar el título sube «Luciano» y «VPS en Clouding» pero hunde las notas
-# de título largo («CRM» con 10.131 notas: del 5.º al 14.º); en total, peor.
+# normalizar el título sube las notas cuyo título es casi solo el término (una
+# persona, un activo) pero hunde las de título largo (una búsqueda de una
+# palabra con 10.131 notas: la correcta pasó del 5.º al 14.º); en total, peor.
 NORMA = {"title": 0.0, "description": 0.3, "tags": 0.0, "body": 0.75}
 K1 = 1.2
 INFIJO = 0.1
