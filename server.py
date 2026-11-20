@@ -664,7 +664,7 @@ def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: 
     if compact:
         args.append("--compact")
         params["compact"] = True
-    if budget is not None and int(budget) >= 0:
+    if budget is not None:
         args += ["--budget", str(int(budget))]
         params["budget"] = int(budget)
     return _run(args, tool_name="okf_traverse", params=params)
