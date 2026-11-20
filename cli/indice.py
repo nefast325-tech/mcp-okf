@@ -60,9 +60,11 @@ def _codificar(fm):
         return "null"
     try:
         texto = json.dumps(fm, default=_a_json, ensure_ascii=False)
-    except (TypeError, ValueError):
-        return None
-    if json.loads(texto, object_hook=_de_json) != fm:
+        # Las claves reservadas también pueden ser datos YAML del usuario:
+        # si el hook falla o las transforma, se conserva el parseo directo.
+        if json.loads(texto, object_hook=_de_json) != fm:
+            return None
+    except (TypeError, ValueError, OverflowError, RecursionError):
         return None
     return texto
 
@@ -94,16 +96,20 @@ def _abrir(vault):
     ruta = Path(vault) / RUTA
     ruta.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(ruta), timeout=2)
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA synchronous=NORMAL")
-    con.execute("CREATE TABLE IF NOT EXISTS meta (clave TEXT PRIMARY KEY, valor TEXT)")
-    fila = con.execute("SELECT valor FROM meta WHERE clave='esquema'").fetchone()
-    if fila is None or fila[0] != str(ESQUEMA):
-        con.execute("DROP TABLE IF EXISTS notas")
-        con.execute("CREATE TABLE notas (ruta TEXT PRIMARY KEY, mtime_ns INTEGER, tam INTEGER, "
-                    "fm TEXT, enlaces TEXT, cuerpo TEXT, cuerpo_inicio INTEGER)")
-        con.execute("INSERT OR REPLACE INTO meta VALUES ('esquema', ?)", (str(ESQUEMA),))
-        con.commit()
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA synchronous=NORMAL")
+        con.execute("CREATE TABLE IF NOT EXISTS meta (clave TEXT PRIMARY KEY, valor TEXT)")
+        fila = con.execute("SELECT valor FROM meta WHERE clave='esquema'").fetchone()
+        if fila is None or fila[0] != str(ESQUEMA):
+            con.execute("DROP TABLE IF EXISTS notas")
+            con.execute("CREATE TABLE notas (ruta TEXT PRIMARY KEY, mtime_ns INTEGER, tam INTEGER, "
+                        "fm TEXT, enlaces TEXT, cuerpo TEXT, cuerpo_inicio INTEGER)")
+            con.execute("INSERT OR REPLACE INTO meta VALUES ('esquema', ?)", (str(ESQUEMA),))
+            con.commit()
+    except BaseException:
+        con.close()
+        raise
     return con
 
 
@@ -143,6 +149,7 @@ def notas(vault, archivos=None, cuerpo=True):
     # Lo que el proceso ya tiene al día no se vuelve a pedir.
     faltan = {rel for rel, (_, m, t) in sellos.items()
               if rel not in memo or memo[rel][:2] != (m, t)
+              or memo[rel][2] is None
               or (cuerpo and "cuerpo" not in memo[rel][2])}
     if faltan:
         _completar(vault, sellos, faltan, memo, cuerpo)
@@ -156,6 +163,32 @@ def _completar(vault, sellos, faltan, memo, cuerpo):
             con = _abrir(vault)
         except (OSError, sqlite3.Error):
             con = None
+    try:
+        _cargar(vault, sellos, faltan, memo, cuerpo, con)
+    finally:
+        if con is not None:
+            con.close()
+
+
+def _desde_fila(fila, cuerpo):
+    """Decodifica una fila desechable; rechaza JSON roto y tipos inválidos."""
+    fm = json.loads(fila[3], object_hook=_de_json)
+    enlaces = json.loads(fila[4])
+    if fm is not None and not isinstance(fm, dict):
+        raise ValueError("frontmatter inválido")
+    if not isinstance(enlaces, list) or any(not isinstance(e, str) for e in enlaces):
+        raise ValueError("enlaces inválidos")
+    if not isinstance(fila[5], int) or fila[5] < 1:
+        raise ValueError("inicio del cuerpo inválido")
+    nota = {"fm": fm, "enlaces": enlaces, "cuerpo_inicio": fila[5]}
+    if cuerpo:
+        if not isinstance(fila[6], str):
+            raise ValueError("cuerpo inválido")
+        nota["cuerpo"] = fila[6]
+    return nota
+
+
+def _cargar(vault, sellos, faltan, memo, cuerpo, con):
     guardadas = {}
     if con is not None:
         try:
@@ -172,13 +205,15 @@ def _completar(vault, sellos, faltan, memo, cuerpo):
         fila = guardadas.get(rel)
         nota = None
         if fila is not None and (fila[1], fila[2]) == (m, t) and fila[3] is not None:
-            nota = {"fm": json.loads(fila[3], object_hook=_de_json), "enlaces": json.loads(fila[4]),
-                    "cuerpo_inicio": fila[5]}
-            if cuerpo:
-                nota["cuerpo"] = fila[6]
-        else:
+            try:
+                nota = _desde_fila(fila, cuerpo)
+            except (ValueError, TypeError, OverflowError, RecursionError):
+                # Un índice dañado no bloquea la fuente autoritativa. La fila
+                # se vuelve a leer del Markdown y se reemplaza si se puede.
+                pass
+        if nota is None:
             nota = leer(f)
-            if nota is not None:
+            if nota is not None and con is not None:
                 nuevas.append((rel, m, t, _codificar(nota["fm"]), json.dumps(nota["enlaces"], ensure_ascii=False),
                                nota["cuerpo"], nota["cuerpo_inicio"]))
         memo[rel] = (m, t, nota)
@@ -200,8 +235,6 @@ def _completar(vault, sellos, faltan, memo, cuerpo):
         con.commit()
     except sqlite3.Error:
         pass
-    finally:
-        con.close()
 
 
 def frontmatter(vault, rel):
