@@ -5,6 +5,9 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
+---
+## [2026-11-20] — v0.4.36
+
 ### Servicio HTTP y revisión de seguridad (#59)
 
 - Modo HTTP opcional con llaves personales SHA-256, permisos de lectura/escritura y revocación sin reinicio. La base de llaves se relee por pedido; altas concurrentes protegidas por flock, temporales únicos 600 y reemplazo atómico. Un JSON inválido rechaza autenticación y no se destruye al crear otra llave.
