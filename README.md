@@ -463,6 +463,101 @@ with a refreshed timestamp gets HEAD's date back. Add it to your hook before
 python3 -m cli --vault "$VAULT" stamp --staged
 ```
 
+## Team mode: OKF as an HTTP service
+
+For teams where people who don't use git — and agents on other machines — read
+and write the same vault, from anywhere, instantly. One server holds the vault;
+everyone talks to it over HTTP with a personal key. It writes with the same
+engine (validation, base revision, secret redaction) and records the history in
+git by itself, one commit per change, under the key owner's name. Nobody needs
+a clone or a commit.
+
+Without `--http` nothing changes: the server is the usual stdio one.
+
+### Start it
+
+```bash
+okf-servicio --vault /srv/vault --http 127.0.0.1:8790 --llaves /etc/okf/llaves.json --autocommit
+# same as: python3 server.py --vault … --http … --llaves … --autocommit
+```
+
+| Option | Env var | Meaning |
+|---|---|---|
+| `--http HOST:PORT` | `OKF_HTTP` | Serve MCP over HTTP (streamable HTTP, path `/mcp`) |
+| `--llaves FILE` | `OKF_LLAVES` | Keys file. **Required with `--http`**: the server refuses to start without it |
+| `--autocommit` | `OKF_AUTOCOMMIT=1` | After each write that changed something: `git add -A` + commit with the key owner as author |
+| `--hosts a.com,b.com` | `OKF_HTTP_HOSTS` | Public hostnames allowed (DNS-rebinding protection) when behind a proxy |
+| `--readonly`, `--scope` | `OKF_READONLY`, `OKF_SCOPE` | Same as stdio: no write tools / only a subtree |
+
+The vault must be a git repository for `--autocommit`. Pushing the history to a
+remote is up to the deployment (a cron or a post-commit hook), following your
+repository's rules.
+
+Recommended in the vault's `.okf.config.yaml` for a shared vault:
+`writes.base_revision: required` and `graph.strict_pairs: true`. Keep `.okf/`
+in the vault's `.gitignore`.
+
+### Keys
+
+```bash
+okf-servicio --llaves /etc/okf/llaves.json --crear-llave "Ana" --correo ana@example.com --permiso escritura
+```
+
+- Prints the key (`okf_…`) **once**. The file stores only its SHA-256, the name,
+  the email and the permission, with mode 600. Hand the key over privately.
+- `--permiso lectura` (the default) or `escritura`. A read key gets
+  `[sin permiso]` from any tool that writes (`new`, `edit`, `index`…).
+- Revoke a key by deleting its entry from the file: it stops working at once,
+  without a restart (the file is re-read when it changes). A lost key: create
+  a new one, delete the old.
+- Without a valid `Authorization: Bearer okf_…` header the server answers 401
+  before reaching MCP.
+
+### Connect a client
+
+The person only needs the URL and the key — no OKF install, no vault, no git.
+
+```bash
+# Claude Code
+claude mcp add --transport http okf https://okf.example.com/mcp --header "Authorization: Bearer okf_…"
+```
+
+```json
+{
+  "mcpServers": {
+    "okf": {
+      "type": "http",
+      "url": "https://okf.example.com/mcp",
+      "headers": { "Authorization": "Bearer okf_…" }
+    }
+  }
+}
+```
+
+Clients that only support OAuth for remote servers (for example, custom
+connectors in claude.ai) are not supported yet.
+
+### What happens on a write
+
+1. The key is checked (401 without a valid one; `[sin permiso]` if it is a read key).
+2. The engine validates as in stdio: the note exists, the state transition is
+   declared, edge types and pairs are allowed, the base revision matches (with
+   `required`), secrets are redacted. A refusal writes nothing and says why.
+3. The note is written under a per-note lock, atomically.
+4. With `--autocommit`, the change is committed: `edit: <note> (por Ana, servicio OKF)`.
+
+Reads run in parallel; writes go one at a time, so each commit has the right
+author. The agent workflow is the one in «How an agent should use them»: read,
+take the revision, `edit` with `base_revision`, re-read on refusal.
+
+### Security and limits
+
+- Put it behind HTTPS (a reverse proxy or a tunnel): the key travels with
+  every request. Never commit the keys file.
+- Permissions are per key and global (read or write the whole vault; use
+  `--scope` for a whole instance). Keys do not expire. No rate limiting.
+- One server holds the vault: it is the single writer of its working copy.
+
 ## Development
 
 ```bash
