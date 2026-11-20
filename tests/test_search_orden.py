@@ -61,10 +61,17 @@ class TestOrden(Base):
         _nota(self.vault, "z.md", "Renovar el dominio", "Nada.")
         self.assertEqual(self.rutas(self.cli("search", "--query", "dominio", "--body"))[0], "z.md")
 
-    def test_coincidir_sigue_siendo_and(self):
+    def test_coincidir_sigue_siendo_and_y_las_parciales_van_despues_marcadas(self):
         _nota(self.vault, "a.md", "Plan de dominio")
         _nota(self.vault, "b.md", "Plan de correo")
-        self.assertEqual(self.rutas(self.cli("search", "--query", "plan dominio")), ["a.md"])
+        out = self.cli("search", "--query", "plan dominio")
+        self.assertEqual(self.rutas(out), ["a.md", "b.md"])
+        lineas = {r: l for l in out.splitlines() for r in ("a.md", "b.md") if l.startswith(f"  {r}")}
+        self.assertNotIn("parcial", lineas["a.md"])
+        self.assertIn("(parcial: 1/2 palabras)", lineas["b.md"])
+        # El JSON sin --limit no se completa: solo las que tienen todas las palabras.
+        self.assertEqual([c["file"] for c in json.loads(self.cli("search", "--query", "plan dominio", "--json"))],
+                         ["a.md"])
 
 
 class TestCorte(Base):
@@ -93,6 +100,54 @@ class TestCorte(Base):
         self.assertEqual(len(rutas), 25)
         self.assertEqual(rutas, sorted(rutas))
         self.assertNotIn("más relevantes", out)
+
+
+class TestTildes(Base):
+    def test_con_o_sin_tilde_encuentra_lo_mismo(self):
+        _nota(self.vault, "a.md", "Página web del cliente", cuerpo="La campaña arranca el lunes.")
+        for q in ("pagina", "página", "PAGINA"):
+            self.assertEqual(self.rutas(self.cli("search", "--query", q)), ["a.md"], q)
+        self.assertEqual(self.rutas(self.cli("search", "--query", "campana", "--body")), ["a.md"])
+
+    def test_los_filtros_campo_valor_no_cambian(self):
+        _nota(self.vault, "a.md", "Uno", status="vigente")
+        self.assertEqual(self.rutas(self.cli("search", "--query", "status:vigente")), ["a.md"])
+
+
+class TestParciales(Base):
+    def setUp(self):
+        super().setUp()
+        _nota(self.vault, "decisions/inventario.md", "El inventario de activos vive en el vault")
+        _nota(self.vault, "notas/otra.md", "Otra cosa")
+
+    def test_si_ninguna_tiene_todas_las_palabras_completa_con_la_mitad_y_lo_marca(self):
+        out = self.cli("search", "--query", "inventario activos suscripciones")
+        self.assertEqual(self.rutas(out), ["decisions/inventario.md"])
+        self.assertIn("(parcial: 2/3 palabras)", out)
+        self.assertIn("0 nota(s) con todas las palabras; se completó con 1", out)
+
+    def test_en_json_dice_cuantas_palabras_tiene(self):
+        data = json.loads(self.cli("search", "--query", "inventario activos suscripciones", "--json"))
+        self.assertEqual(data, [])  # el JSON no se completa: sin --limit no hay corte ni relleno
+        data = json.loads(self.cli("search", "--query", "inventario activos suscripciones", "--json", "--limit", "5"))
+        self.assertEqual(data[0]["match"], "partial")
+        self.assertEqual(data[0]["terms_matched"], "2/3")
+
+    def test_menos_de_la_mitad_no_entra(self):
+        out = self.cli("search", "--query", "inventario cuentas suscripciones")
+        self.assertEqual(self.rutas(out), [])
+
+    def test_una_sola_palabra_no_tiene_parciales(self):
+        self.assertEqual(self.rutas(self.cli("search", "--query", "suscripciones")), [])
+
+    def test_con_filtro_de_estado_no_se_completa(self):
+        out = self.cli("search", "--query", "inventario activos suscripciones", "--status", "vigente")
+        self.assertEqual(self.rutas(out), [])
+
+    def test_las_que_tienen_todas_van_primero(self):
+        _nota(self.vault, "z/completa.md", "Inventario de activos y suscripciones")
+        out = self.cli("search", "--query", "inventario activos suscripciones")
+        self.assertEqual(self.rutas(out), ["z/completa.md", "decisions/inventario.md"])
 
 
 if __name__ == "__main__":

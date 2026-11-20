@@ -682,6 +682,13 @@ def search(query: str = "", type: str = "", status: str = "", cyber_field: str =
     Ask limit=0 to see them all (e.g. to list a complete set). Without text (only type,
     status or date filters) every match is listed, in path order.
 
+    Accents and case don't matter («pagina» finds «Página»). When fewer than
+    `limit` notes have ALL the words of a multi-word query, the table is
+    completed with notes that have at least half of them, after the full
+    matches and marked "(parcial: k/n palabras)" (match="partial" in JSON):
+    read them knowing a word is missing. Not completed when filtering by
+    status, cyber or dates.
+
     NOT full-text (no FTS5): each token of `query` must appear in the title,
     description or tags of the note. With body=True each token may also match
     the note body; body-only matches come after frontmatter matches, marked
