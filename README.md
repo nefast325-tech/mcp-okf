@@ -82,13 +82,20 @@ Vault resolution order:
 2. `$OKF_VAULT` environment variable
 3. `~/OKF-Vault` (default)
 
+If your vault is a git repository, ignore OKF's local state. It holds the note
+cache, read counters and edit locks — per machine, never versioned:
+
+```bash
+echo ".okf/" >> ~/my-vault/.gitignore
+```
+
 ### 5. Run the health check
 
 ```bash
 python3 -m cli health --vault ~/my-vault
 ```
 
-If you see `Health: 9/9`, your vault is ready.
+If every check passes (`Health: N/N — all clear`), your vault is ready.
 
 ### 6. Register the MCP with your agent
 
@@ -146,25 +153,53 @@ mcp_servers:
 
 ## Available Tools
 
+These are the names the server registers. MCP clients usually show them with a
+prefix (in Claude Code, `mcp__okf__traverse`). Tools marked ✏️ write to the
+vault and are not registered with `--readonly`.
+
 | Tool | Description |
 |---|---|
-| `okf_traverse` | Semantic graph traversal — **primary query tool** |
-| `okf_read` | Read a concept's full body |
-| `okf_search` | FTS5 search — **fallback**, prefer traverse |
-| `okf_graph` | Graph analysis: orphans, hubs, backlinks, clusters |
-| `okf_new` | Create a new concept with validated OKF frontmatter |
-| `okf_health` | Vault health check (9 checks) |
-| `okf_index` | Regenerate index.md and log.md |
-| `okf_touch` | Read statistics |
-| `okf_review` | Concepts with past-due review_on (cybernetic loop) |
-| `okf_stale` | Semantic staleness detector |
-| `okf_session_metrics` | Aggregated session metrics |
-| `okf_analytics` | Analytics queries over trace events |
-| `okf_graph_command` | Commands to the Cognitive Trace plugin in Obsidian |
-| `okf_graph_suggest_edge_types` | Suggest typed edge types for wikilinks |
-| `okf_graph_impact` | Ontological impact analysis |
-| `okf_file_info` | Concept file metadata (created/updated dates) |
-| `okf_trace` | Reference trace across all ecosystem layers |
+| `traverse` | Semantic graph traversal — **primary query tool**. `edge_type` is required; capped at `traverse.budget` nodes (100) unless `budget` says otherwise |
+| `read` | Read a concept (frontmatter + body); reports the note's revision for `edit` |
+| `search` | Text search ranked by relevance, 20 results by default — **fallback**, prefer traverse. Also filters by type, status, dates and cyber fields |
+| `todos` | Pending `- [ ]` tasks, grouped by project |
+| `new` ✏️ | Create a concept with validated frontmatter (create-only) |
+| `edit` ✏️ | Update a concept (merge semantics) — the only way to change an existing note |
+| `graph` | Graph analysis: orphans, hubs, backlinks, deps, clusters, paths |
+| `graph_impact` | Which nodes to review if this one changes |
+| `graph_suggest_edge_types` ✏️ | Suggest (and optionally apply) types for untyped wikilinks |
+| `health` | Vault health check |
+| `index` ✏️ | Regenerate `index.md` and `log.md` |
+| `stale` | Semantic staleness detector |
+| `review` | Concepts with past-due `review_on` (cybernetic loop) |
+| `touch` ✏️ | Read statistics (local read counters) |
+| `file_info` | Concept file metadata (created/updated dates) |
+| `canvas` ✏️ | Generate, lay out and validate Obsidian `.canvas` maps |
+| `session_metrics` | Aggregated session metrics |
+| `analytics` ✏️ | Analytics queries over trace events |
+| `graph_command` ✏️ | Commands to the Cognitive Trace plugin in Obsidian |
+| `trace` ✏️ | Reference trace across all ecosystem layers |
+
+### How an agent should use them
+
+1. **Find by structure first.** Read `index.md` files and use `traverse` with the
+   relation you are exploring (`extiende`, `fundamenta`, `aplica`, `depende`,
+   `corrige`…). Counting or filtering by type and status is `search` with
+   `type`/`status` and no text: it lists every match.
+2. **Search text as a fallback.** `search` ranks by relevance and shows 20; the
+   footer says how many more matched (`limit=0` for all). Results marked
+   «(parcial: k/n palabras)» lack some of your words — read them knowing that.
+3. **Read before you write.** `read` ends with `🔖 rev: <hex>`. Pass it as
+   `base_revision` to `edit` when you replace a body or links. If the note
+   changed meanwhile, `edit` refuses and writes nothing: read again, re-apply your
+   change on the current text, retry.
+4. **Trust the refusals.** `new`/`edit` reject undeclared edge types, edge pairs
+   outside `valid_pairs` (with `graph.strict_pairs: true`) and state transitions
+   the vault does not declare; the message says what is allowed. Secrets are
+   redacted before saving and the output says so.
+5. **Superseded notes.** Replaced notes are skipped to their current version;
+   an edge reached through a replaced note is marked «heredada» — do not count
+   it as declared by the current version.
 
 ## The Semantic Graph
 
@@ -319,6 +354,50 @@ credentials in URLs and passwords they recognise are replaced by
 and which rule. `writes.redact: false` turns off redaction in notes, not in
 the trace. Trace body previews remain limited to 100 characters (plus `...`),
 after detecting and redacting secrets in the complete body.
+
+### Search: ranked, capped, accent-insensitive
+
+`search` with text matches every word as a substring (AND) in title,
+description and tags — and in the body with `body=True`. Then:
+
+- **Order:** BM25F over title, description, tags and body. A word that starts a
+  word in the note counts fully; inside another word it barely counts («cto» in
+  «proyecto»). Body-only matches come after frontmatter matches.
+- **Cap:** the table shows the 20 most relevant and a footer with how many
+  more matched. `limit=N` changes it, `limit=0` shows all. JSON is exhaustive
+  unless a limit is passed explicitly.
+- **Partial matches:** if fewer than `limit` notes have all the words of a
+  multi-word query, the table is completed with notes that have at least half
+  of them, after the full matches and marked «(parcial: k/n palabras)»
+  (`match: "partial"`, `terms_matched` in JSON). Not done when filtering by
+  status, cyber fields or dates.
+- **Accents and case don't matter** («pagina» finds «Página»). Exact filters
+  (`type:`, `status:`, `title:`) are not folded.
+- **Filters without text** (`type`, `status`, dates) list every match in path
+  order, uncapped: a filter asks for the complete list.
+
+### Traverse budget
+
+Without `budget`, a traverse returns at most `traverse.budget` nodes (100 by
+default, in `.okf.config.yaml`). When the cap cuts, a line «✂️ N nodo(s) más
+quedaron fuera…» says how many were left out, and the receipt says
+`truncado: sí (tope del vault: 100)` (`budget_default: true` in JSON).
+`budget=0` removes the cap; `budget=N` replaces it; negative values are an
+error. While the cap does not cut, the output is the same as without it.
+
+### Local note cache (`.okf/state/indice.sqlite`)
+
+`search`, `traverse` and the graph read notes through a local cache: parsed
+frontmatter, body links and body per file, reused while the file's `mtime_ns`
+and size do not change. Each call stats every file (cheap) and re-reads only
+what changed. Measured on a synthetic vault of 10,131 notes: searches went from 6–21 s to under
+1.1 s, traverse from 14 s to 0.9 s; building the cache the first time took
+2.5 s (11 MB).
+
+- It is disposable: deleting it only costs a rebuild. A damaged or unreadable
+  cache, a read-only vault or a busy database fall back to reading the files.
+- `OKF_INDICE=0` turns it off.
+- It lives in `.okf/state/` — keep `.okf/` in your vault's `.gitignore`.
 
 ### `okf board` — the vault as a read-only board
 
