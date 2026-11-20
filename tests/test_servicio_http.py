@@ -2,7 +2,7 @@
 
 Para que personas que no usan git, y agentes en otras máquinas, lean y escriban
 el vault al instante sin clon ni commits. Medido el 20-nov-2026 con tres
-usuarios sobre HTTP (~/okf-lab/servicio/probar.py): 401 sin llave, la llave de
+usuarios sobre HTTP, en una prueba de laboratorio: 401 sin llave, la llave de
 lectura no escribe, lo que escribe una persona lo lee otra al instante, una
 relación inventada se rechaza en el momento, 20 ediciones simultáneas sobre la
 misma nota sin perder ninguna y 21 commits con su autor.
