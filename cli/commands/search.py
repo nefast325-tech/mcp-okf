@@ -31,6 +31,10 @@ def _tabla_plegado():
         base = "".join(c for c in unicodedata.normalize("NFKD", ch) if not unicodedata.combining(c))
         if base != ch and base.isascii() and base:
             tabla[cp] = base.lower()
+    # NFD latino usa marcas separadas. Quitarlas en translate evita normalizar
+    # otra vez los cuerpos (habitualmente NFC) en cada búsqueda.
+    tabla.update({cp: None for cp in range(0x300, 0x370)
+                  if unicodedata.combining(chr(cp))})
     return tabla
 
 
@@ -38,7 +42,7 @@ _PLEGADO = _tabla_plegado()
 
 
 def plegar(texto):
-    """Minúsculas y sin tildes: «Página» y «pagina» coinciden. ñ → n."""
+    """Minúsculas y sin tildes latinas (NFC/NFD): «Página» → «pagina», ñ → n."""
     return texto.lower().translate(_PLEGADO)
 
 
@@ -310,6 +314,28 @@ def _snippet(linea, pos, largo):
     return ventana
 
 
+def _span_original(texto, pos, largo):
+    """Pasa el span plegado a offsets del original, sin alterar el snippet.
+
+    Solo se necesita para la primera línea coincidente, nunca para plegar
+    los cuerpos completos. ASCII mantiene los offsets sin trabajo adicional.
+    """
+    if texto.isascii():
+        return pos, largo
+    offset = 0
+    inicio = None
+    for i, ch in enumerate(texto):
+        offset += len(plegar(ch))
+        if inicio is None and offset > pos:
+            inicio = i
+        if inicio is not None and offset >= pos + largo:
+            fin = i + 1
+            while fin < len(texto) and not plegar(texto[fin]):
+                fin += 1
+            return inicio, fin - inicio
+    return pos, largo
+
+
 def _es_filtro(token):
     """True si el token es un filtro de campo (type:/status:/title:/cyber.*:)
     y no texto a buscar. Es la misma regla que aplica `matches_query`."""
@@ -379,6 +405,7 @@ def locate_body_match(concept, query):
             plana_plegada = plegar(plana)
             pos, largo = min((plana_plegada.find(t), len(t))
                              for t in terminos if t in plana_plegada)
+            pos, largo = _span_original(plana, pos, largo)
             resultado["snippet"] = _snippet(plana, pos, largo)
             resultado["section"] = _recortar(seccion, SECTION_MAX) if seccion else None
     return resultado
@@ -568,7 +595,7 @@ def puntuar(concepts, universo, query):
         c["_puntaje"] = puntaje
 
 
-def _parciales(universo, ya, terminos, body_mode, filter_type):
+def _parciales(universo, ya, terminos, body_mode, filter_type, filtros_inline):
     """Notas con al menos la mitad de las palabras (no todas), marcadas `partial`."""
     vistas = {c["file"] for c in ya}
     minimo = (len(terminos) + 1) // 2
@@ -577,6 +604,9 @@ def _parciales(universo, ya, terminos, body_mode, filter_type):
         if c["file"] in vistas:
             continue
         if filter_type and c["type"].lower() != filter_type.lower():
+            continue
+        # Relajar el AND de palabras nunca relaja los predicados de campo.
+        if not matches_query(c, filtros_inline):
             continue
         texto = _fm_searchable(c) + (" " + c.get("_body", "") if body_mode else "")
         tiene = sum(1 for t in terminos if t in texto)
@@ -908,9 +938,9 @@ def run(args, vault, config=None):
 
     # Sin --body las coincidencias de cuerpo no se muestran ni cambian la
     # salida (tampoco el campo `match` en JSON): solo se anuncian al pie.
-    solo_cuerpo = 0
+    solo_cuerpo = set()
     if not body_mode:
-        solo_cuerpo = sum(1 for c in concepts if c.get("match") == "body")
+        solo_cuerpo = {c["file"] for c in concepts if c.get("match") == "body"}
         concepts = [c for c in concepts if c.get("match") != "body"]
 
     # Con texto en la consulta: por relevancia y cortadas a `limit` (la tabla;
@@ -925,14 +955,24 @@ def run(args, vault, config=None):
         puntuar(concepts, universo, query)
         concepts = ordenar(concepts)
         terminos = _terminos(query)
+        filtros_inline = " ".join(t for t in (query or "").lower().split() if _es_filtro(t))
+        # Igual que --status/--cyber-field: estas consultas piden coincidencias
+        # completas, no relleno. Los filtros type/title sí admiten parciales.
+        filtros_estrictos = any(t.split(":", 1)[0] not in ("type", "title")
+                               for t in filtros_inline.split())
         if (len(terminos) > 1 and limit and limit > 0 and len(concepts) < limit
-                and not (filter_status or cyber_field or review_due or since or until)):
-            parciales = _parciales(universo, concepts, terminos, body_mode, filter_type)
+                and not (filter_status or cyber_field or review_due or since or until
+                         or filtros_estrictos)):
+            parciales = _parciales(universo, concepts, terminos, body_mode, filter_type,
+                                   filtros_inline)
             puntuar(parciales, universo, query)
             parciales = ordenar(parciales)[:limit - len(concepts)]
             concepts = concepts + parciales
         if limit and limit > 0:
             concepts = concepts[:limit]
+    # Algunas coincidencias completas con --body ya se mostraron como parcial
+    # sin --body. Contar solo notas adicionales tras el corte real de salida.
+    solo_cuerpo.difference_update(c["file"] for c in concepts)
     for c in concepts:
         for k in ("_body", "_body_raw", "_body_start", "_campos", "_puntaje", "_fm"):
             c.pop(k, None)
@@ -950,7 +990,7 @@ def run(args, vault, config=None):
             print(f"\n(las {len(concepts)} más relevantes de {total}; hay {total - len(concepts)} más: "
                   f"afina la consulta o pide limit=0 para verlas todas)")
         if solo_cuerpo:
-            print(f"\n({solo_cuerpo} nota(s) más mencionan \"{query.strip()}\" "
+            print(f"\n({len(solo_cuerpo)} nota(s) más mencionan \"{(query or '').strip()}\" "
                   f"en el cuerpo; --body para verlas)")
         if hidden:
             # Cada oculta con su vigente (slugs sin .md: el trazador del
