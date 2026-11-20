@@ -153,9 +153,19 @@ def envolver(fn, escribe: bool, mcp, *, vault=None, autocommit=False):
             return fn(**kwargs)
         # Cubre la herramienta entera, incluso fuera de _run o con otro nombre.
         with ESCRITURA:
+            # Una acción "fix" de canvas escribe aunque dry_run llegue True en
+            # otra acción: la simulación se decide por la mutación efectiva.
+            # canvas: validate no escribe sin --fix; layout respeta --dry-run;
+            # generate escribe salvo --dry-run.
+            if fn.__name__ == "canvas":
+                accion = kwargs.get("action")
+                simula = (kwargs.get("dry_run", False) if accion == "layout"
+                          else accion == "validate" and not kwargs.get("fix", False))
+            else:
+                simula = bool(kwargs.get("dry_run", False))
             versiona = autocommit and fn.__name__ in {
                 "new", "edit", "index", "canvas", "graph_suggest_edge_types",
-            } and not kwargs.get("dry_run", False)
+            } and not simula
             if versiona:
                 try:
                     validar_historial(vault)

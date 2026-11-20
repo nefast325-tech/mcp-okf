@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from cli.commands.graph import _cmd_suggest_edge_types, build_graph
@@ -83,6 +84,74 @@ class TestReadOnlyBoundary(unittest.TestCase):
         self.assertEqual(migrate_frontmatter_reads(self.vault), (1, 1))
         self.assertEqual(migrate_frontmatter_reads(self.vault), (0, 0))
         self.assertEqual(get_reads(self.vault)['decisions/a.md'], 10)
+
+
+class TestCanvasConfinement(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.vault = self.root / 'vault'
+        (self.vault / 'insights').mkdir(parents=True)
+        (self.vault / '.okf.config.yaml').write_text('types:\n  valid: [Insight]\nfeatures:\n  cognitive_trace: false\n')
+        self.note = self.vault / 'insights/a.md'
+        self.note.write_text('---\ntype: Insight\ntitle: A\ndescription: fixture\n---\n[[insights/b.md]]\n')
+        (self.vault / 'insights/b.md').write_text('---\ntype: Insight\ntitle: B\ndescription: fixture\n---\nNo links\n')
+        self.keys = self.root / 'keys-fixture.json'
+        self.keys.write_text('{"secret": true}\n')
+
+    def cli(self, *args):
+        return subprocess.run([sys.executable, '-m', 'cli', '--vault', str(self.vault), *args],
+                              capture_output=True, text=True, timeout=30,
+                              env={**os.environ, 'PYTHONPATH': str(REPO)})
+
+    def test_generate_cannot_overwrite_file_outside_vault(self):
+        before = self.keys.read_bytes()
+        result = self.cli('canvas', 'generate', 'insights/a', '--output', str(self.keys))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.keys.read_bytes(), before)
+
+    def test_relative_traversal_symlink_and_wrong_extension_are_rejected(self):
+        (self.vault / 'escape').symlink_to(self.root)
+        for target in ('../keys-fixture.json', 'escape/keys-fixture.json', 'notes.txt'):
+            with self.subTest(target=target):
+                result = self.cli('canvas', 'generate', 'insights/a', '--output', target)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.keys.read_bytes(), b'{"secret": true}\n')
+        self.assertFalse((self.vault / 'notes.txt').exists())
+
+    def test_validate_and_layout_cannot_touch_outside_or_symlinked_canvas(self):
+        external = self.root / 'external.canvas'
+        external.write_text('{"nodes": [], "edges": []}')
+        self.assertEqual(self.cli('canvas', 'validate', str(external), '--fix').returncode, 1)
+        self.assertEqual(self.cli('canvas', 'layout', str(external), 'grid').returncode, 1)
+        (self.vault / 'link.canvas').symlink_to(external)
+        self.assertEqual(self.cli('canvas', 'validate', 'link.canvas').returncode, 1)
+        self.assertEqual(external.read_text(), '{"nodes": [], "edges": []}')
+
+    def test_generate_dry_run_resolves_but_writes_nothing(self):
+        result = self.cli('canvas', 'generate', 'insights/a', '--output', 'mapas/x.canvas', '--dry-run')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('"dry_run": true', result.stdout)
+        self.assertFalse((self.vault / 'mapas/x.canvas').exists())
+
+    def test_wrapper_versions_generate_but_skips_validate_without_fix(self):
+        import asyncio
+        import servicio
+        def canvas(action: str = '', fix: bool = False, dry_run: bool = False) -> str:
+            (self.vault / 'mapas').mkdir(exist_ok=True)
+            (self.vault / 'mapas/x.canvas').write_text('{}')
+            return 'ok'
+        request = SimpleNamespace(state=SimpleNamespace(okf_usuario={'nombre': 'Ana', 'correo': '', 'permiso': 'escritura'}))
+        mcp = SimpleNamespace(get_context=lambda: SimpleNamespace(request_context=SimpleNamespace(request=request)))
+        wrapped = servicio.envolver(canvas, True, mcp, vault=self.vault, autocommit=True)
+        with patch('servicio.validar_historial'), patch('servicio.confirmar', return_value='abc123') as commit:
+            self.assertIn('commit abc123', asyncio.run(wrapped(action='generate', dry_run=True)))
+            self.assertEqual(commit.call_count, 1)
+            self.assertNotIn('commit', asyncio.run(wrapped(action='validate', dry_run=True)))
+            self.assertEqual(commit.call_count, 1)
+            self.assertIn('commit abc123', asyncio.run(wrapped(action='validate', fix=True)))
+            self.assertEqual(commit.call_count, 2)
 
 
 if __name__ == '__main__':

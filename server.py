@@ -1362,6 +1362,8 @@ def canvas(action: str, path: str = "", slug: str = "", algorithm: str = "auto",
         args = ["canvas", "generate", slug, "--depth", str(depth), "--layout", algorithm]
         if output:
             args += ["--output", output]
+        if dry_run:
+            args.append("--dry-run")
     else:
         raise ValueError(f"Unknown canvas action: {action}")
     return _run(args, tool_name="okf_canvas",
