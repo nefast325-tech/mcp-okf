@@ -667,8 +667,16 @@ def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: 
 
 
 @_mcp_tool()
-def search(query: str = "", type: str = "", status: str = "", cyber_field: str = "", cyber_value: str = "", todos: bool = False, json_output: bool = False, since: str = "", until: str = "", with_graph: bool = False, all_versions: bool = False, body: bool = False) -> str:
+def search(query: str = "", type: str = "", status: str = "", cyber_field: str = "", cyber_value: str = "", todos: bool = False, json_output: bool = False, since: str = "", until: str = "", with_graph: bool = False, all_versions: bool = False, body: bool = False, limit: int | None = None) -> str:
     """Substring search (AND over tokens, case-insensitive) in the OKF vault + pending tasks list (todos=true). FALLBACK — prefer traverse or index reads.
+
+    With text in `query`, results are ORDERED BY RELEVANCE (BM25F over title,
+    description, tags and body; a term that starts a word counts, one inside
+    another word barely does) and the table shows the `limit` most relevant
+    (default 20) with a footer saying how many more matched. JSON is exhaustive
+    when limit is omitted; an explicit limit (including 20) also caps JSON.
+    Ask limit=0 to see them all (e.g. to list a complete set). Without text (only type,
+    status or date filters) every match is listed, in path order.
 
     NOT full-text (no FTS5): each token of `query` must appear in the title,
     description or tags of the note. With body=True each token may also match
@@ -705,6 +713,8 @@ def search(query: str = "", type: str = "", status: str = "", cyber_field: str =
         until: Filter by timestamp <= date (ISO 8601, inclusive)
         with_graph: If True, includes ## Detected relationships section with typed edges between results
         body: If True, also matches each token against the note body (after the frontmatter)
+        limit: With text in query, maximum notes to show (0 = all). Omitted/None
+            inherits CLI defaults: table 20, JSON all. Explicit 20 caps either format.
     """
     args = ["search"]
     if query:
@@ -731,11 +741,13 @@ def search(query: str = "", type: str = "", status: str = "", cyber_field: str =
         args.append("--with-graph")
     if all_versions:
         args.append("--all-versions")
+    if limit is not None:
+        args += ["--limit", str(limit)]
     return _run(args, tool_name="okf_search", params={
         "query": query, "type": type, "status": status,
         "cyber_field": cyber_field, "cyber_value": cyber_value,
         "todos": todos, "json_output": json_output,
-        "since": since, "until": until, "body": body,
+        "since": since, "until": until, "body": body, "limit": limit,
     })
 
 

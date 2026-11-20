@@ -27,8 +27,11 @@ APOYO_EDGES = SUPPORT_EDGES + ("aplica",)
 
 
 def _frontmatter(vault, rel):
+    # Del índice del proceso si `build_graph` ya leyó esta nota: el mapa de
+    # vigentes mira todas las notas y antes las volvía a leer todas.
+    from cli.indice import frontmatter
     try:
-        fm, _ = parse_frontmatter((vault / rel).read_text(encoding="utf-8"))
+        fm = frontmatter(vault, rel)
     except Exception:
         return {}
     return fm or {}

@@ -31,36 +31,38 @@ def build_graph(vault, definitions=None):
     """
     from cli.edge_types import score_edge
 
+    from cli.indice import notas, rel_de
     all_files = find_md_files(vault)
-    name_index = {f.name: str(f.relative_to(vault)) for f in all_files}
+    rels = {f: rel_de(f, vault) for f in all_files}  # una vez: relative_to es caro por miles
+    name_index = {f.name: rels[f] for f in all_files}
     graph = {}
 
     for f in all_files:
-        relpath = str(f.relative_to(vault))
+        relpath = rels[f]
         graph[relpath] = {"out": [], "in": [], "typed_out": [], "typed_in": [],
                           "leaf": False}
 
-    # ── Cache de frontmatter por archivo ──
+    # ── Frontmatter y enlaces por archivo, del índice local (cli/indice.py):
+    # solo se releen los archivos que cambiaron desde la última llamada ──
+    datos = notas(vault, all_files, cuerpo=False)
     fm_cache = {}
     for f in all_files:
-        relpath = str(f.relative_to(vault))
-        try:
-            text = f.read_text(encoding="utf-8")
-            fm, _ = parse_frontmatter(text)
-            fm_cache[relpath] = fm if fm else {}
-            if isinstance(fm, dict) and fm.get("leaf") is True:
-                graph[relpath]["leaf"] = True
-        except Exception:
-            fm_cache[relpath] = {}
+        relpath = rels[f]
+        nota = datos.get(relpath)
+        fm = nota["fm"] if nota else None
+        fm_cache[relpath] = fm if fm else {}
+        if isinstance(fm, dict) and fm.get("leaf") is True:
+            graph[relpath]["leaf"] = True
 
     # ── Primera pasada: construir aristas ──
     typed_edges_raw = []  # (source, target, edge_type)
 
     for f in all_files:
-        relpath = str(f.relative_to(vault))
+        relpath = rels[f]
 
         # --- Wikilinks (existente) ---
-        links = extract_links(f)
+        nota = datos.get(relpath)
+        links = nota["enlaces"] if nota else []
         for target in links:
             resolved = resolve_link(target, vault, f.parent, name_index)
             if resolved and resolved in graph and resolved != relpath:
