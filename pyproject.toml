@@ -10,7 +10,7 @@ description = "MCP server for OKF vaults — 20 tools for AI agents to query, cr
 # Bumpear solo cli/__init__.py; el paquete instalado reporta la misma versión
 # (pip show / importlib.metadata). Si esto se rompe, tests/test_version.py falla.
 requires-python = ">=3.11"
-dependencies = ["mcp[cli]>=1.0.0,<2", "pyyaml>=6.0"]
+dependencies = ["mcp[cli]>=1.29.1,<2", "pyyaml>=6.0"]
 # PEP 639: la licencia va como expresión SPDX y el texto viaja como
 # license-files. Necesita setuptools>=77; el classifier legado
 # "License :: OSI Approved :: MIT License" ya no se permite junto a esto.
@@ -26,7 +26,7 @@ readme = "README.md"
 dynamic = ["version"]
 
 [project.scripts]
-okf-mcp = "server:mcp.run"
+okf-mcp = "server:_main"
 okf-servicio = "server:_main"
 
 [tool.setuptools]

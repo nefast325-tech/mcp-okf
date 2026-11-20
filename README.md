@@ -485,11 +485,14 @@ okf-servicio --vault /srv/vault --http 127.0.0.1:8790 --llaves /etc/okf/llaves.j
 |---|---|---|
 | `--http HOST:PORT` | `OKF_HTTP` | Serve MCP over HTTP (streamable HTTP, path `/mcp`) |
 | `--llaves FILE` | `OKF_LLAVES` | Keys file. **Required with `--http`**: the server refuses to start without it |
-| `--autocommit` | `OKF_AUTOCOMMIT=1` | After each write that changed something: `git add -A` + commit with the key owner as author |
+| `--autocommit` | `OKF_AUTOCOMMIT=1` | Commit changed notes/canvas with the key owner as author; refuse writes if unrelated changes are pending |
 | `--hosts a.com,b.com` | `OKF_HTTP_HOSTS` | Public hostnames allowed (DNS-rebinding protection) when behind a proxy |
 | `--readonly`, `--scope` | `OKF_READONLY`, `OKF_SCOPE` | Same as stdio: no write tools / only a subtree |
 
-The vault must be a git repository for `--autocommit`. Pushing the history to a
+The vault must be the root of its own git repository for `--autocommit`, with
+no pending content changes at startup or before a versioned write. Only changed
+`.md`/`.canvas` files are staged; `.okf/` and `.obsidian/` local state is never
+included. Pushing the history to a
 remote is up to the deployment (a cron or a post-commit hook), following your
 repository's rules.
 
@@ -508,7 +511,7 @@ okf-servicio --llaves /etc/okf/llaves.json --crear-llave "Ana" --correo ana@exam
 - `--permiso lectura` (the default) or `escritura`. A read key gets
   `[sin permiso]` from any tool that writes (`new`, `edit`, `index`…).
 - Revoke a key by deleting its entry from the file: it stops working at once,
-  without a restart (the file is re-read when it changes). A lost key: create
+  without a restart (the file is re-read on every request). A lost key: create
   a new one, delete the old.
 - Without a valid `Authorization: Bearer okf_…` header the server answers 401
   before reaching MCP.
@@ -546,6 +549,19 @@ connectors in claude.ai) are not supported yet.
 3. The note is written under a per-note lock, atomically.
 4. With `--autocommit`, the change is committed: `edit: <note> (por Ana, servicio OKF)`.
 
+If git or a hook rejects the commit, the response says **`[error de historial]`**:
+the tool ran, but its change is NOT confirmed in git. The pending content blocks
+the next versioned write (`[historial bloqueado]`) rather than attributing it to
+the next person. Fix the hook/problem and review and commit the pending change
+as the original author before resuming; the service never bypasses hooks.
+Statistics, trace and graph commands update local state, not versioned content.
+Reading never rewrites Markdown, including legacy notes with `reads: N`.
+Before serving an old vault, run `python3 -m cli --vault /srv/vault migrate-reads`
+as its administrator and commit the migration to preserve historical counters.
+The service keeps new read events in `.okf/state/reads.jsonl`; the legacy field
+stays untouched until that explicit migration. Graph suggestion application
+shares `edit`'s per-note lock and uses atomic replacement.
+
 Reads run in parallel; writes go one at a time, so each commit has the right
 author. The agent workflow is the one in «How an agent should use them»: read,
 take the revision, `edit` with `base_revision`, re-read on refusal.
@@ -554,6 +570,11 @@ take the revision, `edit` with `base_revision`, re-read on refusal.
 
 - Put it behind HTTPS (a reverse proxy or a tunnel): the key travels with
   every request. Never commit the keys file.
+- The keys file must be **outside** the vault. HTTP uses stateless MCP requests:
+  each request authenticates independently; sessions are not shared between keys.
+  Telemetry is grouped by key fingerprint, not by the hosting process's session.
+- The tested MCP SDK floor is `mcp>=1.29.1,<2`; update the installed dependencies
+  before enabling HTTP. Both `okf-mcp` and `okf-servicio` accept the service flags.
 - Permissions are per key and global (read or write the whole vault; use
   `--scope` for a whole instance). Keys do not expire. No rate limiting.
 - One server holds the vault: it is the single writer of its working copy.

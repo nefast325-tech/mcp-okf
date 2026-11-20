@@ -168,7 +168,8 @@ def _mcp_tool():
         fn.__doc__ = (doc + f"\n\nVault de esta instancia: {_vault_label()}.").strip()
         if _HTTP:
             import servicio
-            mcp.tool()(servicio.envolver(fn, fn.__name__ in _WRITE_TOOLS, mcp))
+            mcp.tool()(servicio.envolver(fn, fn.__name__ in _WRITE_TOOLS, mcp,
+                                        vault=VAULT, autocommit=_AUTOCOMMIT))
             return fn
         return mcp.tool()(fn)
     return _decorator
@@ -217,6 +218,11 @@ def _get_prompt_id() -> str:
 
 def _get_session_id() -> str:
     """Returns the harness session_id (OKF/DSH/Hermes) or generates a local one."""
+    if _HTTP:
+        import servicio
+        session = servicio.SESION.get()
+        if session:
+            return session
     for _var in ("OKF_SESSION_ID", "DSH_SESSION_ID", "HERMES_SESSION_ID"):
         _sid = os.environ.get(_var, "")
         if _sid:
@@ -562,20 +568,19 @@ def _run(args: list[str], tool_name: str = "unknown", params: dict | None = None
 
     Persists event to SQLite + JSONL as a side effect.
     """
-    short = tool_name[4:] if tool_name.startswith("okf_") else tool_name
-    escritura = bool(_HTTP) and short in _WRITE_TOOLS
     usuario = None
     if _HTTP:
         import servicio
         usuario = servicio.USUARIO.get()
     try:
-        if escritura:
-            servicio.ESCRITURA.acquire()  # de a una: el commit queda con su autor
         start = time.monotonic()
         env = {**os.environ, "PYTHONPATH": _SUBPROCESS_PYTHONPATH, "OKF_MCP_CALLER": "1",
                "OKF_SESSION_ID": _get_session_id()}
         if usuario:
             env["OKF_AUTOR"] = f"{usuario['nombre']} <{usuario['correo']}>"
+        # La política llega al último punto de escritura, no solo al menú MCP.
+        if _READONLY or (usuario and usuario['permiso'] == 'lectura'):
+            env["OKF_READONLY"] = "1"
         result = subprocess.run(
             CLI + args,
             capture_output=True,
@@ -586,10 +591,7 @@ def _run(args: list[str], tool_name: str = "unknown", params: dict | None = None
         )
         duration_ms = int((time.monotonic() - start) * 1000)
         output = result.stdout
-        if escritura and _AUTOCOMMIT and result.returncode == 0 and "--dry-run" not in args:
-            sha = servicio.confirmar(VAULT, usuario, tool_name, list(args))
-            if sha:
-                output += f"\n📝 guardado en el historial (commit {sha})"
+
         if result.stderr:
             output += "\n[stderr]\n" + result.stderr
         if result.returncode != 0:
@@ -619,9 +621,7 @@ def _run(args: list[str], tool_name: str = "unknown", params: dict | None = None
         )
         _finish_event(tool_name, params or {}, result, duration_ms, list(args))
         return f"[error] {e}"
-    finally:
-        if escritura:
-            servicio.ESCRITURA.release()
+
 
 
 @_mcp_tool()
@@ -874,6 +874,10 @@ def graph(command: str, arg: str = "", edge_type: str = "") -> str:
         arg: Additional argument (concept slug for backlinks/deps, tag name for tags)
         edge_type: Filter backlinks/deps by edge type (extiende, refina, etc.)
     """
+    allowed = {"stats", "orphans", "hubs", "backlinks", "deps", "tags", "bridges",
+               "cluster", "path", "dump", "dirs", "types", "impact", "suggest-edge-types"}
+    if command not in allowed or arg.lstrip().startswith("-"):
+        return "[sin permiso] graph solo acepta análisis y argumentos de datos; usá graph_suggest_edge_types para aplicar."
     args = ["graph", command]
     if arg:
         args.append(arg)
@@ -1413,6 +1417,13 @@ def _main():
     if _HTTP:
         import servicio
         hosts = [h for h in (_argv_value("--hosts") or os.environ.get("OKF_HTTP_HOSTS", "")).split(",") if h]
+        if Path(_LLAVES_RUTA).expanduser().resolve().is_relative_to(VAULT.resolve()):
+            sys.exit("okf: el archivo de llaves debe estar FUERA del vault.")
+        if _AUTOCOMMIT:
+            try:
+                servicio.validar_historial(VAULT)
+            except RuntimeError as exc:
+                sys.exit(f"okf: --autocommit no puede arrancar: {exc}")
         servicio.correr(mcp, _HTTP, servicio.Llaves(_LLAVES_RUTA), hosts)
         return
     mcp.run()

@@ -134,25 +134,39 @@ def get_reads(vault):
 
 
 def _migrate_file_if_needed(filepath, rel, vault):
-    """Si el frontmatter todavía tiene el campo viejo 'reads: N': sembrar
-    baseline en el store y limpiarlo (un commit único por archivo)."""
-    try:
-        content = filepath.read_text(encoding="utf-8")
-    except Exception:
-        return
-    n, new_content = _fm_reads(content)
-    if n is None:
-        return
-    try:
-        with _locked(vault, mode="a") as f:
-            f.write(json.dumps({"slug": rel, "ts": _now(), "baseline": n},
-                               ensure_ascii=False) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        if new_content != content:
-            filepath.write_text(new_content, encoding="utf-8")
-    except Exception:
-        return
+    """Migración explícita: releer y limpiar bajo el mismo candado de edit."""
+    from cli.access import is_readonly
+    from cli.revision import candado, escribir_atomico
+    if is_readonly():
+        raise PermissionError("readonly no permite migrar frontmatter")
+    with candado(vault, filepath):
+        try:
+            content = filepath.read_text(encoding="utf-8")
+            n, new_content = _fm_reads(content)
+            if n is None:
+                return 0, 0
+            with _locked(vault, mode="a+") as f:
+                f.seek(0)
+                seeded = False
+                for line in f:
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    if event.get("slug") == rel and "baseline" in event:
+                        seeded = True
+                        break
+                if not seeded:
+                    f.seek(0, os.SEEK_END)
+                    f.write(json.dumps({"slug": rel, "ts": _now(), "baseline": n},
+                                       ensure_ascii=False) + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+            if new_content != content:
+                escribir_atomico(filepath, new_content)
+            return int(not seeded), int(new_content != content)
+        except OSError:
+            return 0, 0
 
 
 def increment_reads(filepath, vault):
@@ -169,7 +183,9 @@ def increment_reads(filepath, vault):
     rel = _rel_slug(filepath, vault)
     if rel is None:
         return 0
-    _migrate_file_if_needed(filepath, rel, vault)
+    # Una lectura no puede reescribir Markdown (ni siquiera para migrar un
+    # contador viejo): puede ser readonly o competir con edit. La limpieza y
+    # el baseline histórico pertenecen al comando explícito migrate-reads.
     event = {"slug": rel, "ts": _now()}
     try:
         with _locked(vault, mode="a") as f:
@@ -195,34 +211,9 @@ def migrate_frontmatter_reads(vault):
 
     vault = Path(vault)
     seeded = cleaned = 0
-    events = []
-    to_clean = []
     for md in find_md_files(vault):
-        try:
-            content = md.read_text(encoding="utf-8")
-        except Exception:
-            continue
-        n, new_content = _fm_reads(content)
-        if n is None:
-            continue
         rel = str(md.relative_to(vault))
-        events.append({"slug": rel, "ts": _now(), "baseline": n})
-        if new_content != content:
-            to_clean.append((md, new_content))
-        seeded += 1
-    if events:
-        try:
-            with _locked(vault, mode="a") as f:
-                for ev in events:
-                    f.write(json.dumps(ev, ensure_ascii=False) + "\n")
-                f.flush()
-                os.fsync(f.fileno())
-        except Exception:
-            return 0, 0
-    for md, new_content in to_clean:
-        try:
-            md.write_text(new_content, encoding="utf-8")
-            cleaned += 1
-        except Exception:
-            pass
+        added, removed = _migrate_file_if_needed(md, rel, vault)
+        seeded += added
+        cleaned += removed
     return seeded, cleaned

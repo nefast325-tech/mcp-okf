@@ -5,6 +5,16 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ---
 ## [Unreleased]
 
+### Servicio HTTP y revisión de seguridad (#59)
+
+- Modo HTTP opcional con llaves personales SHA-256, permisos de lectura/escritura y revocación sin reinicio. La base de llaves se relee por pedido; altas concurrentes protegidas por flock, temporales únicos 600 y reemplazo atómico. Un JSON inválido rechaza autenticación y no se destruye al crear otra llave.
+- MCP HTTP sin sesiones compartidas (stateless); contexto de usuario y telemetría separados por huella de llave. TLS sigue siendo responsabilidad del proxy. Llaves obligatoriamente fuera del vault.
+- Autocommit bajo candado de la herramienta completa, incluyendo sugerencias de aristas y comandos del grafo. Solo notas/canvas; nunca `.okf/` ni `.obsidian/`. Git debe ser propio y estar limpio antes de escribir; fallos de add/commit/hooks son explícitos y bloquean la siguiente escritura hasta resolver el pendiente, sin saltarse hooks.
+- **Corrección de un bypass readonly preexistente:** el `graph` genérico ya no interpreta argumentos como flags mutadores; el permiso readonly se propaga al CLI y aplicar sugerencias se rechaza también en su último punto de mutación. Las sugerencias comparten el candado por nota de `edit` y reemplazan atómicamente.
+- **Cambio deliberado de contrato:** leer una nota con `reads: N` ya no migra ni reescribe su Markdown. El baseline histórico se conserva hasta `migrate-reads` explícito, que ahora relee bajo candado y evita baselines duplicados. Los eventos nuevos siguen guardándose en el store local.
+- `okf-mcp` y `okf-servicio` comparten despacho; SDK mínimo probado `mcp>=1.29.1,<2`.
+- **774 tests OK** en sandbox offline y entorno limpio, incluidos los originales 756 del PR, regresiones RED→GREEN y HTTP real: 9 herramientas rechazadas a una llave lectora, bypass graph cerrado, nota legacy intacta, 20 ediciones concurrentes + 10 rechazos/reintentos sin pérdidas, 21 commits con autor correcto, revocación 401 y fallo de hook visible con bloqueo posterior. Host y Origin no permitidos: 421/403.
+
 ---
 ## [2026-11-19] — v0.4.35
 
