@@ -166,9 +166,17 @@ def run(args, vault, config=None):
     all_versions = getattr(args, "all_versions", False)
     compact = getattr(args, "compact", False)        # --compact: una línea por nodo
     budget = getattr(args, "budget", None)           # --budget N: la salida se corta en N nodos
-    if budget is not None and budget < 1:
-        print("Error: --budget must be >= 1.", file=sys.stderr)
+    if budget is not None and budget < 0:
+        print("Error: --budget must be >= 0 (0 = sin tope).", file=sys.stderr)
         return 1
+    # Sin --budget rige el tope del vault (`traverse.budget`, 100 por defecto):
+    # una nota a la que apuntan cientos devolvía más de lo que un agente puede
+    # leer. --budget 0 lo quita. Mientras no corte, la salida es la de siempre.
+    tope_del_vault = budget is None
+    if tope_del_vault:
+        budget = config.traverse_budget if config is not None else 100
+    if budget == 0:
+        budget = None
     if filter_mode and not edge_type_filter:
         print("⚠️  --filter without --edge-type: does not filter anything. Use --edge-type <type> --filter.",
               file=sys.stderr)
@@ -363,7 +371,9 @@ def run(args, vault, config=None):
         return {
             "nodes": len(nodes), "reachable": reachable, "depth": depth,
             "bytes": nbytes, "tokens": nbytes // 4,
-            "truncated": truncated, "budget": budget,
+            "truncated": truncated,
+            "budget": budget if (truncated or not tope_del_vault) else None,
+            **({"budget_default": True} if (tope_del_vault and truncated) else {}),
         }
 
     # ── Output JSON ──
@@ -534,10 +544,16 @@ def run(args, vault, config=None):
         _p()
 
     # ── Recibo: siempre, en modo normal y compacto ──
+    if tope_del_vault and truncated:
+        _p(f"✂️  {reachable - len(nodes)} nodo(s) más quedaron fuera por el tope del vault ({budget}). "
+           f"Para verlos todos pide budget=0; para menos, filtra con edge_type + filter o baja depth.")
     text = "\n".join(out) + "\n"
     r = _receipt(len(text.encode("utf-8")))
     sys.stdout.write(text)
-    budget_str = f" (--budget {budget})" if budget is not None else ""
+    if tope_del_vault:
+        budget_str = f" (tope del vault: {budget})" if truncated else ""
+    else:
+        budget_str = f" (--budget {budget})" if budget is not None else ""
     print(f"📎 recibo: {r['nodes']} nodos de {r['reachable']} · depth {depth} · "
           f"{r['bytes']} bytes ≈ {r['tokens']} tokens · "
           f"truncado: {'sí' if truncated else 'no'}{budget_str}")
