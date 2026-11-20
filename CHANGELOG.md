@@ -6,6 +6,38 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ## [Unreleased]
 
 ---
+## [2026-11-19] — v0.4.35
+
+Seis PRs (#52–#57), con sus correcciones de revisión y pruebas de integración: escritura protegida por revisión, secretos tachados antes de persistir, búsquedas acotadas por relevancia y traversal que distingue aristas heredadas. Suite verificada: **744 tests**.
+
+### Escritura segura (#52)
+
+- `read`, `new` y `edit` devuelven una revisión de contenido; `edit --base-revision` rechaza escrituras basadas en una nota que ya cambió. Candado por nota entre procesos y reemplazo atómico.
+- `writes.base_revision`: `optional` (default compatible, escribe y avisa), `required` (exige revisión al reemplazar cuerpo o links), `off` (sin aviso). Los campos se funden sin exigir revisión; `links` y subclaves están reservados en `fields` para no eludir validación y revisión.
+- `new`/`edit` tachan los secretos reconocidos en el texto entrante. `writes.redact: false` desactiva el tachado en las notas, no en la traza. La detección se hace sobre el cuerpo completo antes de recortar su preview en SQLite/JSONL.
+- Claves YAML arbitrarias, incluidas las redactadas, se entrecomillan cuando corresponde y conservan tipos en objetos/listas anidados. El frontmatter generado se valida antes de escribir.
+
+### Aristas y presupuesto de traversal (#53, #55)
+
+- Una arista alcanzada por una nota reemplazada se marca `inherited` / «heredada»: no se atribuye como propia a la vigente. Si existe declaración propia del mismo tipo, prevalecen sus metadatos sin cambiar la primera posición BFS ni la selección de `budget`.
+- Sin presupuesto explícito rige `traverse.budget` del vault, **100 nodos por defecto**. `budget=0` elimina el tope y un positivo lo reemplaza; negativos devuelven error también por MCP. El recibo informa alcanzables, truncado y si cortó el tope del vault.
+
+### Índice local y búsqueda (#54, #56)
+
+- Caché SQLite desechable en `.okf/state/indice.sqlite`, invalidada por `mtime_ns` y tamaño; memo del proceso compartido por grafo y mapa de vigentes. `OKF_INDICE=0` desactiva la caché persistente. Fallos de apertura, notas ilegibles y filas corruptas recurren al Markdown sin bloquear la consulta; los diccionarios YAML con claves `$fecha`/`$momento` no colisionan con la codificación de fechas.
+- Parser YAML seguro en C cuando está disponible y recorrido de archivos que poda directorios excluidos.
+- Ranking BM25F: tabla con las **20 notas más relevantes** por defecto y aviso de cuántas quedaron fuera. `limit=0` muestra todas. JSON sin límite explícito y consultas solo por filtros siguen exhaustivos; MCP distingue límite omitido de `limit=20` explícito.
+- Plegado latino de mayúsculas/tildes NFC y NFD. Si faltan resultados para una consulta de varias palabras, se completa con parciales de al menos la mitad de los términos, marcados y después de las coincidencias completas. Los filtros de campo se conservan; estado, cyber y fechas desactivan el relleno. Los filtros exactos no se normalizan.
+- El contador de coincidencias adicionales en cuerpo excluye notas ya mostradas como parciales; los snippets conservan texto y posiciones originales.
+
+### Tests y verificación (#57 y regresiones de revisión)
+
+- Fixture del dashboard con fechas relativas: deja de vencer al superar el umbral de antigüedad.
+- **744 tests OK** en la integración y en `master` después de los merges; CI verde en Python 3.11 y 3.12.
+- Regresiones RED→GREEN para caché recuperable, concurrencia de ediciones, YAML, filtros/parciales y orden BFS. E2E MCP stdio → CLI real, SQLite y JSONL para límites de búsqueda y traversal de 121 nodos.
+- No se cambian automáticamente las políticas de escritura de los vaults ni se publican las mediciones de rendimiento del autor como mediciones locales del release.
+
+---
 ## [2026-11-03] — v0.4.34
 
 El smoke de `validate --all` era el único cuyo costo crece con el vault, con un tope fijo de 15 s: en un vault de 326 archivos bajo carga tardaba 19,7–24,2 s, `health` daba 🔴 7/8 y el pre-commit (`health --strict`) **rechazaba todo commit sobre un vault sano**. Dos correcciones, del autor del PR y mía.
