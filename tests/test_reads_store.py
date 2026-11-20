@@ -67,14 +67,16 @@ class TestReadsStore(unittest.TestCase):
         self.assertNotIn("reads:", self.note.read_text(encoding="utf-8"))
         self.assertEqual(get_reads(self.vault).get("decisions/foo.md"), 7)
 
-    def test_increment_auto_migrates_legacy_field(self):
+    def test_legacy_migration_is_explicit_not_a_read_side_effect(self):
         self.note.write_text(
             "---\ntype: Insight\ntitle: Foo\ndescription: Bar\nreads: 5\n---\n# Foo\n",
             encoding="utf-8",
         )
+        before = self.note.read_bytes()
         new_val = increment_reads(self.note, self.vault)
-        self.assertEqual(new_val, 6)
-        self.assertNotIn("reads:", self.note.read_text(encoding="utf-8"))
+        self.assertEqual(new_val, 1)
+        self.assertEqual(self.note.read_bytes(), before)
+        self.assertEqual(migrate_frontmatter_reads(self.vault), (1, 1))
         self.assertEqual(get_reads(self.vault).get("decisions/foo.md"), 6)
 
     def test_migrate_preserves_body(self):
@@ -89,17 +91,18 @@ class TestReadsStore(unittest.TestCase):
         self.assertIn(body, restored)  # el body sobrevive íntegro
         self.assertNotIn("reads:", restored)
 
-    def test_increment_auto_migrate_preserves_body(self):
+    def test_increment_legacy_preserves_entire_note(self):
         body = "# Foo\n\nParrafo del body que NO debe perderse.\n"
         self.note.write_text(
             "---\ntype: Insight\ntitle: Foo\ndescription: Bar\nreads: 5\n---\n" + body,
             encoding="utf-8",
         )
+        before = self.note.read_bytes()
         new_val = increment_reads(self.note, self.vault)
-        self.assertEqual(new_val, 6)
+        self.assertEqual(new_val, 1)
         restored = self.note.read_text(encoding="utf-8")
         self.assertIn(body, restored)
-        self.assertNotIn("reads:", restored)
+        self.assertEqual(self.note.read_bytes(), before)
 
     def test_legacy_field_in_body_is_not_touched(self):
         # Un 'reads:' en el body no debe confundirse con el contador

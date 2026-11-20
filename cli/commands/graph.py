@@ -756,6 +756,9 @@ def _cmd_suggest_edge_types(vault, graph, apply=False, dry_run=False,
     """
     from cli.edge_types import suggest_edge_type, score_edge
     from cli.frontmatter import parse_frontmatter
+    from cli.access import is_readonly
+    if apply and is_readonly():
+        raise PermissionError("[sin permiso] readonly no permite aplicar sugerencias")
 
     suggestions = {"ALTA": [], "MEDIA": [], "BAJA": []}
 
@@ -930,34 +933,30 @@ def _cmd_suggest_edge_types(vault, graph, apply=False, dry_run=False,
             skipped_score = len(all_sug) - len(candidates)
         else:
             candidates = suggestions["ALTA"]
+        from cli.revision import candado, escribir_atomico
         for item in candidates:
             source_file = vault / item["source"]
-            try:
-                content = source_file.read_text(encoding="utf-8")
-            except Exception:
-                continue
-
-            if not content.startswith("---"):
-                continue
-
-            end_fm = content.find("\n---\n", 3)
-            if end_fm == -1:
-                end_fm = content.find("\n---", 3)
-            if end_fm == -1:
-                continue
-
-            fm_text = content[3:end_fm]
-            after_fm = content[end_fm:]
-
-            new_fm = _insert_link_entry(
-                fm_text, item["target"], item["suggested_type"]
-            )
-
-            new_content = f"---\n{new_fm}{after_fm}"
-
-            if not dry_run:
-                source_file.write_text(new_content, encoding="utf-8")
-            apply_count += 1
+            # Compartir el candado de edit, releer DENTRO y reemplazar atómico.
+            with candado(vault, source_file):
+                try:
+                    content = source_file.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+                if not content.startswith("---"):
+                    continue
+                end_fm = content.find("\n---\n", 3)
+                if end_fm == -1:
+                    end_fm = content.find("\n---", 3)
+                if end_fm == -1:
+                    continue
+                fm_text = content[3:end_fm]
+                new_fm = _insert_link_entry(fm_text, item["target"], item["suggested_type"])
+                if new_fm == fm_text:
+                    continue
+                new_content = f"---\n{new_fm}{content[end_fm:]}"
+                if not dry_run:
+                    escribir_atomico(source_file, new_content)
+                apply_count += 1
 
         if min_score > 0:
             lines.append(
@@ -1002,6 +1001,10 @@ def run(args, vault, config=None):
 
     # suggest-edge-types solo necesita build_graph, no tag_index
     if subcommand == "suggest-edge-types":
+        from cli.access import is_readonly
+        if apply_flag and is_readonly():
+            print("[sin permiso] readonly no permite aplicar sugerencias", file=sys.stderr)
+            return 1
         graph = build_graph(vault, definitions=definitions)
         print(_cmd_suggest_edge_types(
             vault, graph, apply=apply_flag, dry_run=dry_run_flag,

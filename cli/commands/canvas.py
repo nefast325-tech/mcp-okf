@@ -111,6 +111,31 @@ def _save_canvas(path, data):
     path.write_text(text + "\n", encoding="utf-8")
 
 
+def _canvas_destino(vault, path) -> Path:
+    """Resuelve un destino .canvas SIN salir del vault ni seguir symlinks."""
+    vault = Path(vault).resolve()
+    dest = Path(path)
+    if not dest.is_absolute():
+        dest = vault / dest
+    # Comprobar antes de resolve: después se pierde la identidad del symlink.
+    for component in (dest, *dest.parents):
+        if component == vault:
+            break
+        if component.is_symlink():
+            raise PermissionError(f"canvas: el destino atraviesa un symlink: {path}")
+    dest = dest.resolve()
+    try:
+        dest.relative_to(vault)
+    except ValueError:
+        raise PermissionError(f"canvas: destino fuera del vault: {path}") from None
+    if dest.suffix != ".canvas":
+        raise PermissionError(f"canvas: el destino debe ser .canvas: {path}")
+    from cli.access import in_scope_file
+    if not in_scope_file(dest, vault):
+        raise PermissionError(f"canvas: destino fuera del scope: {path}")
+    return dest
+
+
 # ─────────────────────────────────────────────
 # VALIDATE — sensor
 # ─────────────────────────────────────────────
@@ -759,7 +784,7 @@ def _node_text(relpath, fm):
 
 
 def generate_canvas(vault, root_slug, depth=1, layout="auto", output=None,
-                    max_nodes=80):
+                    max_nodes=80, dry_run=False):
     """Generate a .canvas from the vault graph around a root concept.
 
     Uses the typed edge graph (cli.commands.graph.build_graph) so edges carry
@@ -867,8 +892,13 @@ def generate_canvas(vault, root_slug, depth=1, layout="auto", output=None,
 
     data = {"nodes": nodes, "edges": edges}
     if output is None:
-        output = str(Path(vault) / "mapas" / f"{Path(root_rel).stem}.canvas")
-    out_path = Path(output)
+        from cli.access import scope_root
+        output = str(scope_root(vault) / "mapas" / f"{Path(root_rel).stem}.canvas")
+    out_path = _canvas_destino(vault, output)
+    if dry_run:
+        return {"success": True, "dry_run": True, "output": str(out_path),
+                "nodes": len(nodes), "edges": len(edges), "layout": algorithm,
+                "root": root_rel}
     out_path.parent.mkdir(parents=True, exist_ok=True)
     _save_canvas(out_path, data)
 
@@ -924,6 +954,8 @@ def build_subparser(subparsers):
                        help="Layout algorithm (default: auto-detect)")
     p_gen.add_argument("--max-nodes", type=int, default=80, help="Node cap (default: 80)")
     p_gen.add_argument("--output", default=None, help="Output path (default: mapas/<slug>.canvas)")
+    p_gen.add_argument("--dry-run", action="store_true", default=False,
+                       help="Build and resolve the destination without writing")
 
     return sp
 
@@ -935,12 +967,22 @@ def run(args, vault, config):
         return 2
 
     if args.canvas_sub == "validate":
-        report = validate_canvas(Path(args.path), fix=args.fix)
+        try:
+            dest = _canvas_destino(vault, args.path)
+        except PermissionError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        report = validate_canvas(dest, fix=args.fix)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["valid"] else 1
 
     if args.canvas_sub == "layout":
-        report = layout_canvas(args.path, args.algorithm, dry_run=args.dry_run,
+        try:
+            dest = _canvas_destino(vault, args.path)
+        except PermissionError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        report = layout_canvas(dest, args.algorithm, dry_run=args.dry_run,
                                direction=args.direction, columns=args.columns,
                                center=args.center, iterations=args.iterations)
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -949,7 +991,7 @@ def run(args, vault, config):
     if args.canvas_sub == "generate":
         report = generate_canvas(vault, args.slug, depth=args.depth,
                                  layout=args.layout, output=args.output,
-                                 max_nodes=args.max_nodes)
+                                 max_nodes=args.max_nodes, dry_run=args.dry_run)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report.get("success") else 1
 

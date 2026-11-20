@@ -179,8 +179,8 @@ def increment_reads(filepath, vault=None):
     (<vault>/.okf/state/reads.jsonl, no versionado) — decisión 2026-08-27:
     escribirlos en el frontmatter versionaba ruido en cada lectura y
     generaba conflictos constantes en vaults multi-actor con sync
-    automático. Si el archivo todavía tiene el campo viejo 'reads: N',
-    se migra solo (baseline + limpieza).
+    automático. El campo viejo 'reads: N' se conserva: su baseline y limpieza
+    se migran explícitamente con migrate-reads, nunca durante una lectura.
 
     Args:
         filepath: Path to .md file.

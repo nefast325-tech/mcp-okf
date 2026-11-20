@@ -95,6 +95,17 @@ def _argv_value(flag):
 # acceso. Por eso, en la práctica, se pinea por argv en el config del perfil:
 #   args: [server.py, --vault, /opt/data/vault, --scope, publico, --readonly]
 _READONLY = ("--readonly" in sys.argv) or is_readonly()
+
+# ── Modo servicio (servicio.py) ─────────────────────────────────────────────
+# --http HOST:PORT (o OKF_HTTP): MCP por HTTP para personas y agentes en otras
+# máquinas, con una llave por persona (--llaves, OKF_LLAVES) y, con
+# --autocommit (OKF_AUTOCOMMIT=1), commit en git de cada escritura con su autor.
+# Sin --http el server es el de siempre (stdio) y nada de esto corre.
+_HTTP = _argv_value("--http") or os.environ.get("OKF_HTTP", "")
+_LLAVES_RUTA = _argv_value("--llaves") or os.environ.get("OKF_LLAVES", "")
+_AUTOCOMMIT = ("--autocommit" in sys.argv) or os.environ.get("OKF_AUTOCOMMIT", "") in ("1", "true", "yes")
+if _HTTP and not _LLAVES_RUTA:
+    sys.exit("okf: --http necesita --llaves <archivo> (sin llaves, cualquiera podría escribir en el vault).")
 _SCOPE = normalize_scope(_argv_value("--scope") or os.environ.get("OKF_SCOPE", ""))
 if _SCOPE:
     CLI += ["--scope", _SCOPE]
@@ -155,6 +166,11 @@ def _mcp_tool():
         doc = (fn.__doc__ or "").rstrip()
         doc = re.sub(r"\n*Vault de esta instancia:.*\Z", "", doc, flags=re.S)
         fn.__doc__ = (doc + f"\n\nVault de esta instancia: {_vault_label()}.").strip()
+        if _HTTP:
+            import servicio
+            mcp.tool()(servicio.envolver(fn, fn.__name__ in _WRITE_TOOLS, mcp,
+                                        vault=VAULT, autocommit=_AUTOCOMMIT))
+            return fn
         return mcp.tool()(fn)
     return _decorator
 
@@ -202,6 +218,11 @@ def _get_prompt_id() -> str:
 
 def _get_session_id() -> str:
     """Returns the harness session_id (OKF/DSH/Hermes) or generates a local one."""
+    if _HTTP:
+        import servicio
+        session = servicio.SESION.get()
+        if session:
+            return session
     for _var in ("OKF_SESSION_ID", "DSH_SESSION_ID", "HERMES_SESSION_ID"):
         _sid = os.environ.get(_var, "")
         if _sid:
@@ -547,19 +568,30 @@ def _run(args: list[str], tool_name: str = "unknown", params: dict | None = None
 
     Persists event to SQLite + JSONL as a side effect.
     """
+    usuario = None
+    if _HTTP:
+        import servicio
+        usuario = servicio.USUARIO.get()
     try:
         start = time.monotonic()
+        env = {**os.environ, "PYTHONPATH": _SUBPROCESS_PYTHONPATH, "OKF_MCP_CALLER": "1",
+               "OKF_SESSION_ID": _get_session_id()}
+        if usuario:
+            env["OKF_AUTOR"] = f"{usuario['nombre']} <{usuario['correo']}>"
+        # La política llega al último punto de escritura, no solo al menú MCP.
+        if _READONLY or (usuario and usuario['permiso'] == 'lectura'):
+            env["OKF_READONLY"] = "1"
         result = subprocess.run(
             CLI + args,
             capture_output=True,
             text=True,
             timeout=timeout,
             cwd=str(VAULT),
-            env={**os.environ, "PYTHONPATH": _SUBPROCESS_PYTHONPATH, "OKF_MCP_CALLER": "1",
-                 "OKF_SESSION_ID": _get_session_id()},
+            env=env,
         )
         duration_ms = int((time.monotonic() - start) * 1000)
         output = result.stdout
+
         if result.stderr:
             output += "\n[stderr]\n" + result.stderr
         if result.returncode != 0:
@@ -589,6 +621,7 @@ def _run(args: list[str], tool_name: str = "unknown", params: dict | None = None
         )
         _finish_event(tool_name, params or {}, result, duration_ms, list(args))
         return f"[error] {e}"
+
 
 
 @_mcp_tool()
@@ -841,6 +874,10 @@ def graph(command: str, arg: str = "", edge_type: str = "") -> str:
         arg: Additional argument (concept slug for backlinks/deps, tag name for tags)
         edge_type: Filter backlinks/deps by edge type (extiende, refina, etc.)
     """
+    allowed = {"stats", "orphans", "hubs", "backlinks", "deps", "tags", "bridges",
+               "cluster", "path", "dump", "dirs", "types", "impact", "impact-batch", "suggest-edge-types"}
+    if command not in allowed or arg.lstrip().startswith("-"):
+        return "[sin permiso] graph solo acepta análisis y argumentos de datos; usá graph_suggest_edge_types para aplicar."
     args = ["graph", command]
     if arg:
         args.append(arg)
@@ -1310,7 +1347,7 @@ def canvas(action: str, path: str = "", slug: str = "", algorithm: str = "auto",
         algorithm: Layout algorithm: grid, dagre, radial, force, linear, auto (layout/generate)
         depth: BFS depth from root concept (generate, default 1)
         fix: Auto-fix grid alignment and color types (validate)
-        dry_run: Compute layout without writing (layout)
+        dry_run: Compute without writing (layout/generate); validate writes only with fix=True
         output: Output path (generate; default mapas/<slug>.canvas)
     """
     if action == "validate":
@@ -1325,6 +1362,8 @@ def canvas(action: str, path: str = "", slug: str = "", algorithm: str = "auto",
         args = ["canvas", "generate", slug, "--depth", str(depth), "--layout", algorithm]
         if output:
             args += ["--output", output]
+        if dry_run:
+            args.append("--dry-run")
     else:
         raise ValueError(f"Unknown canvas action: {action}")
     return _run(args, tool_name="okf_canvas",
@@ -1367,5 +1406,30 @@ def review() -> str:
 # Initialize DB on module load
 _init_db()
 
-if __name__ == "__main__":
+def _main():
+    nombre = _argv_value("--crear-llave")
+    if nombre is not None:
+        import servicio
+        if not _LLAVES_RUTA:
+            sys.exit("okf: --crear-llave necesita --llaves <archivo>.")
+        llave = servicio.Llaves(_LLAVES_RUTA).crear(nombre, _argv_value("--correo") or "",
+                                                     _argv_value("--permiso") or "lectura")
+        print(llave)  # única vez que se ve en claro
+        return
+    if _HTTP:
+        import servicio
+        hosts = [h for h in (_argv_value("--hosts") or os.environ.get("OKF_HTTP_HOSTS", "")).split(",") if h]
+        if Path(_LLAVES_RUTA).expanduser().resolve().is_relative_to(VAULT.resolve()):
+            sys.exit("okf: el archivo de llaves debe estar FUERA del vault.")
+        if _AUTOCOMMIT:
+            try:
+                servicio.validar_historial(VAULT)
+            except RuntimeError as exc:
+                sys.exit(f"okf: --autocommit no puede arrancar: {exc}")
+        servicio.correr(mcp, _HTTP, servicio.Llaves(_LLAVES_RUTA), hosts)
+        return
     mcp.run()
+
+
+if __name__ == "__main__":
+    _main()
