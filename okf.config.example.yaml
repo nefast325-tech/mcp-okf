@@ -177,6 +177,24 @@ exclude:
     - references
     - assets
 
+# ── Writes ───────────────────────────────────────────────────
+# What `new` and `edit` check before writing (see README → "Writes").
+writes:
+  # Redact recognized secrets (API keys, tokens, passwords in prose)
+  # before saving. false = store what arrives (the trace is still redacted).
+  redact: true
+  # `edit` replacing the body or links without --base-revision:
+  #   optional = write and warn · required = refuse · off = no warning.
+  # Use `required` when several people or agents write to the same vault.
+  base_revision: optional
+
+# ── Traverse ─────────────────────────────────────────────────
+traverse:
+  # Max nodes a traverse returns when the call does not ask for a budget.
+  # A note that hundreds of notes point to would otherwise return more than
+  # an agent can read at once. 0 = no cap.
+  budget: 100
+
 # ── Optional Features ────────────────────────────────────────
 features:
   # Cognitive Trace: event persistence (SQLite + JSONL)
