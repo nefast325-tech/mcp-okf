@@ -95,6 +95,17 @@ def _argv_value(flag):
 # acceso. Por eso, en la práctica, se pinea por argv en el config del perfil:
 #   args: [server.py, --vault, /opt/data/vault, --scope, publico, --readonly]
 _READONLY = ("--readonly" in sys.argv) or is_readonly()
+
+# ── Modo servicio (servicio.py) ─────────────────────────────────────────────
+# --http HOST:PORT (o OKF_HTTP): MCP por HTTP para personas y agentes en otras
+# máquinas, con una llave por persona (--llaves, OKF_LLAVES) y, con
+# --autocommit (OKF_AUTOCOMMIT=1), commit en git de cada escritura con su autor.
+# Sin --http el server es el de siempre (stdio) y nada de esto corre.
+_HTTP = _argv_value("--http") or os.environ.get("OKF_HTTP", "")
+_LLAVES_RUTA = _argv_value("--llaves") or os.environ.get("OKF_LLAVES", "")
+_AUTOCOMMIT = ("--autocommit" in sys.argv) or os.environ.get("OKF_AUTOCOMMIT", "") in ("1", "true", "yes")
+if _HTTP and not _LLAVES_RUTA:
+    sys.exit("okf: --http necesita --llaves <archivo> (sin llaves, cualquiera podría escribir en el vault).")
 _SCOPE = normalize_scope(_argv_value("--scope") or os.environ.get("OKF_SCOPE", ""))
 if _SCOPE:
     CLI += ["--scope", _SCOPE]
@@ -155,6 +166,10 @@ def _mcp_tool():
         doc = (fn.__doc__ or "").rstrip()
         doc = re.sub(r"\n*Vault de esta instancia:.*\Z", "", doc, flags=re.S)
         fn.__doc__ = (doc + f"\n\nVault de esta instancia: {_vault_label()}.").strip()
+        if _HTTP:
+            import servicio
+            mcp.tool()(servicio.envolver(fn, fn.__name__ in _WRITE_TOOLS, mcp))
+            return fn
         return mcp.tool()(fn)
     return _decorator
 
@@ -547,19 +562,34 @@ def _run(args: list[str], tool_name: str = "unknown", params: dict | None = None
 
     Persists event to SQLite + JSONL as a side effect.
     """
+    short = tool_name[4:] if tool_name.startswith("okf_") else tool_name
+    escritura = bool(_HTTP) and short in _WRITE_TOOLS
+    usuario = None
+    if _HTTP:
+        import servicio
+        usuario = servicio.USUARIO.get()
     try:
+        if escritura:
+            servicio.ESCRITURA.acquire()  # de a una: el commit queda con su autor
         start = time.monotonic()
+        env = {**os.environ, "PYTHONPATH": _SUBPROCESS_PYTHONPATH, "OKF_MCP_CALLER": "1",
+               "OKF_SESSION_ID": _get_session_id()}
+        if usuario:
+            env["OKF_AUTOR"] = f"{usuario['nombre']} <{usuario['correo']}>"
         result = subprocess.run(
             CLI + args,
             capture_output=True,
             text=True,
             timeout=timeout,
             cwd=str(VAULT),
-            env={**os.environ, "PYTHONPATH": _SUBPROCESS_PYTHONPATH, "OKF_MCP_CALLER": "1",
-                 "OKF_SESSION_ID": _get_session_id()},
+            env=env,
         )
         duration_ms = int((time.monotonic() - start) * 1000)
         output = result.stdout
+        if escritura and _AUTOCOMMIT and result.returncode == 0 and "--dry-run" not in args:
+            sha = servicio.confirmar(VAULT, usuario, tool_name, list(args))
+            if sha:
+                output += f"\n📝 guardado en el historial (commit {sha})"
         if result.stderr:
             output += "\n[stderr]\n" + result.stderr
         if result.returncode != 0:
@@ -589,6 +619,9 @@ def _run(args: list[str], tool_name: str = "unknown", params: dict | None = None
         )
         _finish_event(tool_name, params or {}, result, duration_ms, list(args))
         return f"[error] {e}"
+    finally:
+        if escritura:
+            servicio.ESCRITURA.release()
 
 
 @_mcp_tool()
@@ -1367,5 +1400,23 @@ def review() -> str:
 # Initialize DB on module load
 _init_db()
 
-if __name__ == "__main__":
+def _main():
+    nombre = _argv_value("--crear-llave")
+    if nombre is not None:
+        import servicio
+        if not _LLAVES_RUTA:
+            sys.exit("okf: --crear-llave necesita --llaves <archivo>.")
+        llave = servicio.Llaves(_LLAVES_RUTA).crear(nombre, _argv_value("--correo") or "",
+                                                     _argv_value("--permiso") or "lectura")
+        print(llave)  # única vez que se ve en claro
+        return
+    if _HTTP:
+        import servicio
+        hosts = [h for h in (_argv_value("--hosts") or os.environ.get("OKF_HTTP_HOSTS", "")).split(",") if h]
+        servicio.correr(mcp, _HTTP, servicio.Llaves(_LLAVES_RUTA), hosts)
+        return
     mcp.run()
+
+
+if __name__ == "__main__":
+    _main()
