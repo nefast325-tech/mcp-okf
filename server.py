@@ -875,7 +875,7 @@ def graph(command: str, arg: str = "", edge_type: str = "") -> str:
         edge_type: Filter backlinks/deps by edge type (extiende, refina, etc.)
     """
     allowed = {"stats", "orphans", "hubs", "backlinks", "deps", "tags", "bridges",
-               "cluster", "path", "dump", "dirs", "types", "impact", "suggest-edge-types"}
+               "cluster", "path", "dump", "dirs", "types", "impact", "impact-batch", "suggest-edge-types"}
     if command not in allowed or arg.lstrip().startswith("-"):
         return "[sin permiso] graph solo acepta análisis y argumentos de datos; usá graph_suggest_edge_types para aplicar."
     args = ["graph", command]
@@ -1347,7 +1347,7 @@ def canvas(action: str, path: str = "", slug: str = "", algorithm: str = "auto",
         algorithm: Layout algorithm: grid, dagre, radial, force, linear, auto (layout/generate)
         depth: BFS depth from root concept (generate, default 1)
         fix: Auto-fix grid alignment and color types (validate)
-        dry_run: Compute layout without writing (layout)
+        dry_run: Compute without writing (layout/generate); validate writes only with fix=True
         output: Output path (generate; default mapas/<slug>.canvas)
     """
     if action == "validate":

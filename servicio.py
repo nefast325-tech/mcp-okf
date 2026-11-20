@@ -159,7 +159,7 @@ def envolver(fn, escribe: bool, mcp, *, vault=None, autocommit=False):
             # generate escribe salvo --dry-run.
             if fn.__name__ == "canvas":
                 accion = kwargs.get("action")
-                simula = (kwargs.get("dry_run", False) if accion == "layout"
+                simula = (kwargs.get("dry_run", False) if accion in {"layout", "generate"}
                           else accion == "validate" and not kwargs.get("fix", False))
             else:
                 simula = bool(kwargs.get("dry_run", False))

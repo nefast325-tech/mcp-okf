@@ -117,7 +117,12 @@ def _canvas_destino(vault, path) -> Path:
     dest = Path(path)
     if not dest.is_absolute():
         dest = vault / dest
-    # resolve() sigue symlinks: un .canvas que apunta fuera se rechaza.
+    # Comprobar antes de resolve: después se pierde la identidad del symlink.
+    for component in (dest, *dest.parents):
+        if component == vault:
+            break
+        if component.is_symlink():
+            raise PermissionError(f"canvas: el destino atraviesa un symlink: {path}")
     dest = dest.resolve()
     try:
         dest.relative_to(vault)
@@ -125,8 +130,9 @@ def _canvas_destino(vault, path) -> Path:
         raise PermissionError(f"canvas: destino fuera del vault: {path}") from None
     if dest.suffix != ".canvas":
         raise PermissionError(f"canvas: el destino debe ser .canvas: {path}")
-    if dest.exists() and dest.is_symlink():
-        raise PermissionError(f"canvas: el destino es un symlink: {path}")
+    from cli.access import in_scope_file
+    if not in_scope_file(dest, vault):
+        raise PermissionError(f"canvas: destino fuera del scope: {path}")
     return dest
 
 
@@ -886,7 +892,8 @@ def generate_canvas(vault, root_slug, depth=1, layout="auto", output=None,
 
     data = {"nodes": nodes, "edges": edges}
     if output is None:
-        output = str(Path(vault) / "mapas" / f"{Path(root_rel).stem}.canvas")
+        from cli.access import scope_root
+        output = str(scope_root(vault) / "mapas" / f"{Path(root_rel).stem}.canvas")
     out_path = _canvas_destino(vault, output)
     if dry_run:
         return {"success": True, "dry_run": True, "output": str(out_path),
@@ -961,21 +968,21 @@ def run(args, vault, config):
 
     if args.canvas_sub == "validate":
         try:
-            _canvas_destino(vault, args.path)
+            dest = _canvas_destino(vault, args.path)
         except PermissionError as exc:
             print(str(exc), file=sys.stderr)
             return 1
-        report = validate_canvas(Path(args.path), fix=args.fix)
+        report = validate_canvas(dest, fix=args.fix)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["valid"] else 1
 
     if args.canvas_sub == "layout":
         try:
-            _canvas_destino(vault, args.path)
+            dest = _canvas_destino(vault, args.path)
         except PermissionError as exc:
             print(str(exc), file=sys.stderr)
             return 1
-        report = layout_canvas(args.path, args.algorithm, dry_run=args.dry_run,
+        report = layout_canvas(dest, args.algorithm, dry_run=args.dry_run,
                                direction=args.direction, columns=args.columns,
                                center=args.center, iterations=args.iterations)
         print(json.dumps(report, ensure_ascii=False, indent=2))

@@ -102,7 +102,7 @@ class TestCanvasConfinement(unittest.TestCase):
 
     def cli(self, *args):
         return subprocess.run([sys.executable, '-m', 'cli', '--vault', str(self.vault), *args],
-                              capture_output=True, text=True, timeout=30,
+                              capture_output=True, text=True, timeout=30, cwd=self.root,
                               env={**os.environ, 'PYTHONPATH': str(REPO)})
 
     def test_generate_cannot_overwrite_file_outside_vault(self):
@@ -146,12 +146,58 @@ class TestCanvasConfinement(unittest.TestCase):
         mcp = SimpleNamespace(get_context=lambda: SimpleNamespace(request_context=SimpleNamespace(request=request)))
         wrapped = servicio.envolver(canvas, True, mcp, vault=self.vault, autocommit=True)
         with patch('servicio.validar_historial'), patch('servicio.confirmar', return_value='abc123') as commit:
-            self.assertIn('commit abc123', asyncio.run(wrapped(action='generate', dry_run=True)))
+            self.assertIn('commit abc123', asyncio.run(wrapped(action='generate')))
             self.assertEqual(commit.call_count, 1)
             self.assertNotIn('commit', asyncio.run(wrapped(action='validate', dry_run=True)))
             self.assertEqual(commit.call_count, 1)
             self.assertIn('commit abc123', asyncio.run(wrapped(action='validate', fix=True)))
             self.assertEqual(commit.call_count, 2)
+
+    def test_canvas_dry_run_works_with_dirty_history_and_never_calls_commit(self):
+        import asyncio
+        import servicio
+        def canvas(action: str = '', fix: bool = False, dry_run: bool = False) -> str:
+            return 'simulated'
+        request = SimpleNamespace(state=SimpleNamespace(okf_usuario={'nombre': 'Ana', 'correo': '', 'permiso': 'escritura'}))
+        mcp = SimpleNamespace(get_context=lambda: SimpleNamespace(request_context=SimpleNamespace(request=request)))
+        wrapped = servicio.envolver(canvas, True, mcp, vault=self.vault, autocommit=True)
+        with patch('servicio.validar_historial', side_effect=RuntimeError('dirty')) as preflight:
+            with patch('servicio.confirmar') as commit:
+                for action in ('generate', 'layout'):
+                    self.assertEqual(asyncio.run(wrapped(action=action, dry_run=True)), 'simulated')
+                preflight.assert_not_called()
+                commit.assert_not_called()
+                self.assertIn('[historial bloqueado]', asyncio.run(wrapped(action='validate', fix=True, dry_run=True)))
+
+    def test_relative_validate_layout_use_the_checked_vault_path_not_cwd(self):
+        # Dos archivos homónimos: solamente el del vault puede cambiar.
+        initial = '{"nodes": [{"id":"a","type":"text","text":"x","x":33,"y":7,"width":200,"height":100}],"edges":[]}'
+        checked = self.vault / 'x.canvas'
+        external = self.root / 'x.canvas'
+        checked.write_text(initial)
+        external.write_text(initial)
+        result = self.cli('canvas', 'validate', 'x.canvas', '--fix')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(external.read_text(), initial)
+        self.assertNotEqual(checked.read_text(), initial)
+        checked.write_text(initial)
+        result = self.cli('canvas', 'layout', 'x.canvas', 'grid')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(external.read_text(), initial)
+        self.assertNotEqual(checked.read_text(), initial)
+
+    def test_canvas_destinations_respect_scope_and_reject_internal_symlink(self):
+        outside_scope = self.vault / 'outside.canvas'
+        result = self.cli('--scope', 'insights', 'canvas', 'generate', 'insights/a', '--output', str(outside_scope))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(outside_scope.exists())
+        result = self.cli('--scope', 'insights', 'canvas', 'generate', 'insights/a')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.vault / 'insights/mapas/a.canvas').exists())
+        target = self.vault / 'internal.canvas'
+        target.write_text('{"nodes":[],"edges":[]}')
+        (self.vault / 'alias.canvas').symlink_to(target)
+        self.assertEqual(self.cli('canvas', 'validate', 'alias.canvas').returncode, 1)
 
 
 if __name__ == '__main__':
