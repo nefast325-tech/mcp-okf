@@ -603,7 +603,7 @@ def _parciales(universo, ya, terminos, body_mode, filter_type, filtros_inline):
     for c in universo:
         if c["file"] in vistas:
             continue
-        if filter_type and c["type"].lower() != filter_type.lower():
+        if filter_type and c["type"].lower() not in _valores(filter_type):
             continue
         # Relajar el AND de palabras nunca relaja los predicados de campo.
         if not matches_query(c, filtros_inline):
@@ -775,6 +775,99 @@ def _print_typed_edges(edges):
         print(f"    └─ {etype} → {target}")
 
 
+def _valores(filtro):
+    """«pendiente, en-curso» -> {"pendiente", "en-curso"}; vacío = sin filtro."""
+    return {v.strip().lower() for v in str(filtro or "").split(",") if v.strip()}
+
+
+def _sin_md(rel):
+    return rel[:-3] if rel.endswith(".md") else rel
+
+
+def _resolver_notas(pedidas, rels):
+    """Rutas (con .md) de las notas nombradas en `pedidas` (slugs separados por coma).
+
+    Acepta la ruta con o sin `.md`, o solo el nombre del archivo si no es
+    ambiguo. Devuelve (rutas, errores): un slug que no existe o que nombra a
+    varias notas es un error que se dice, no un filtro que calla.
+    """
+    por_slug = {_sin_md(r): r for r in rels}
+    rutas, errores = set(), []
+    for crudo in str(pedidas or "").split(","):
+        pedido = _sin_md(crudo.strip().strip("[]"))
+        if not pedido:
+            continue
+        if pedido in por_slug:
+            rutas.add(por_slug[pedido])
+            continue
+        candidatas = [r for slug, r in por_slug.items() if slug.rsplit("/", 1)[-1] == pedido]
+        if len(candidatas) == 1:
+            rutas.add(candidatas[0])
+        elif candidatas:
+            errores.append(f"«{pedido}» nombra a varias notas: {', '.join(sorted(_sin_md(c) for c in candidatas))}")
+        else:
+            errores.append(f"no hay ninguna nota «{pedido}»")
+    return rutas, errores
+
+
+def filtrar_por_arista(concepts, todas, graph, edge=None, edge_dir="out",
+                       linked=None, linked_type=None, linked_status=None):
+    """Deja las notas con al menos una arista tipada que cumple el filtro.
+
+    Es un salto exacto sobre `links:`, tal como está declarado: una arista hacia
+    una nota reemplazada cuenta hacia ESA nota, no hacia su versión vigente
+    (al revés que `traverse`, que la sustituye). Sirve para lo que antes pedía
+    armar el conjunto a mano: «planes que aplican decisiones reemplazadas»,
+    «tareas canceladas que aplicaban tal plan», «qué depende de tal sistema».
+
+    edge_dir="out": la nota del resultado declara la arista hacia la enlazada.
+    edge_dir="in":  la enlazada declara la arista hacia la nota del resultado.
+
+    Cada nota que queda lleva en `edges` las aristas que cumplieron, con el
+    tipo y el estado de la nota del otro extremo.
+    """
+    tipos_arista = _valores(edge)
+    tipos_nota, estados = _valores(linked_type), _valores(linked_status)
+    ficha = {c["file"]: c for c in todas}
+    clave = "typed_out" if edge_dir != "in" else "typed_in"
+    quedan = []
+    for c in concepts:
+        cumplen = []
+        for arista in graph.get(c["file"], {}).get(clave, []):
+            otra = ficha.get(arista["target"])
+            if otra is None:
+                continue
+            if tipos_arista and arista["type"].lower() not in tipos_arista:
+                continue
+            if linked is not None and arista["target"] not in linked:
+                continue
+            if tipos_nota and otra["type"].lower() not in tipos_nota:
+                continue
+            if estados and otra["status"].lower() not in estados:
+                continue
+            cumplen.append({"type": arista["type"], "dir": "in" if edge_dir == "in" else "out",
+                            "linked": _sin_md(arista["target"]), "linked_type": otra["type"],
+                            "linked_status": otra["status"]})
+        if cumplen:
+            c["edges"] = cumplen
+            quedan.append(c)
+    return quedan
+
+
+def _print_aristas(concepts, edge_dir):
+    """Las aristas que cumplieron el filtro, por nota: es la justificación de cada fila."""
+    print()
+    if edge_dir == "in":
+        print("## Aristas que cumplen el filtro (la nota enlazada la declara hacia la del resultado)")
+    else:
+        print("## Aristas que cumplen el filtro (la nota del resultado la declara)")
+    for c in concepts:
+        print(f"  {_sin_md(c['file'])}  [{c['status'] or 'sin estado'}]")
+        for a in c.get("edges", []):
+            flecha = "←" if edge_dir == "in" else "→"
+            print(f"    └─ {a['type']} {flecha} {a['linked']}  ({a['linked_type']} · {a['linked_status'] or 'sin estado'})")
+
+
 def run(args, vault, config=None):
     """Runs concept or task search."""
     json_out = getattr(args, "json", False)
@@ -793,6 +886,12 @@ def run(args, vault, config=None):
     with_graph = getattr(args, "with_graph", False)
     all_versions = getattr(args, "all_versions", False)
     body_mode = getattr(args, "body", False)
+    edge = getattr(args, "edge", None)
+    edge_dir = (getattr(args, "edge_dir", None) or "out").lower()
+    linked = getattr(args, "linked", None)
+    linked_type = getattr(args, "linked_type", None)
+    linked_status = getattr(args, "linked_status", None)
+    por_arista = bool(edge or linked or linked_type or linked_status)
 
     if with_aging and not todos_mode:
         print("Error: --aging only works with --todos", file=sys.stderr)
@@ -802,6 +901,12 @@ def run(args, vault, config=None):
         return 1
     if cyber_value and not cyber_field:
         print("Error: --cyber-value requires --cyber-field", file=sys.stderr)
+        return 1
+    if edge_dir not in ("out", "in"):
+        print("Error: --edge-dir es out (la nota declara la arista) o in (la recibe)", file=sys.stderr)
+        return 1
+    if por_arista and todos_mode:
+        print("Error: los filtros de arista no se combinan con --todos", file=sys.stderr)
         return 1
 
     if todos_mode:
@@ -822,6 +927,26 @@ def run(args, vault, config=None):
 
     concepts = find_concepts(vault, plegar_cuerpo=bool(query and query.strip()))
     limit = getattr(args, "limit", None)
+    todas = concepts
+    tipos, estados = _valores(filter_type), _valores(filter_status)
+
+    graph = notas_enlazadas = None
+    if por_arista:
+        from cli.commands.graph import build_graph
+        from cli.edge_types import resolve_definitions
+        definiciones = config.edge_type_definitions() if config else None
+        graph = build_graph(vault, definitions=definiciones)
+        validos = {str(k).lower() for k in resolve_definitions(definiciones)}
+        desconocidos = sorted(_valores(edge) - validos)
+        if desconocidos:
+            print(f"Error: tipo de arista desconocido: {', '.join(desconocidos)}. "
+                  f"Válidos: {', '.join(sorted(validos))}", file=sys.stderr)
+            return 1
+        if linked:
+            notas_enlazadas, errores = _resolver_notas(linked, [c["file"] for c in todas])
+            if errores:
+                print("Error: --linked: " + "; ".join(errores), file=sys.stderr)
+                return 1
 
     # Las reemplazadas se ocultan salvo --all-versions o --status <ese estado>.
     # Se guardan aparte para contar al pie solo las que coinciden con la
@@ -843,7 +968,10 @@ def run(args, vault, config=None):
         # cuenta: es la misma regla de recall que para las vivas.
         hidden = [c for c in hidden if matches_query(c, query, body=body_mode)]
     if filter_type:
-        hidden = [c for c in hidden if c["type"].lower() == filter_type.lower()]
+        hidden = [c for c in hidden if c["type"].lower() in tipos]
+    if por_arista:
+        hidden = filtrar_por_arista(hidden, todas, graph, edge, edge_dir, notas_enlazadas,
+                                    linked_type, linked_status)
 
     if query and query.strip():
         fm_hits = [c for c in concepts if matches_query(c, query)]
@@ -866,9 +994,12 @@ def run(args, vault, config=None):
                 c.update(locate_body_match(c, query))
         concepts = fm_hits + body_hits
     if filter_type:
-        concepts = [c for c in concepts if c["type"].lower() == filter_type.lower()]
+        concepts = [c for c in concepts if c["type"].lower() in tipos]
     if filter_status:
-        concepts = [c for c in concepts if c["status"].lower() == filter_status.lower()]
+        concepts = [c for c in concepts if c["status"].lower() in estados]
+    if por_arista:
+        concepts = filtrar_por_arista(concepts, todas, graph, edge, edge_dir, notas_enlazadas,
+                                      linked_type, linked_status)
 
     if cyber_field:
         field_path = cyber_field.split(".")
@@ -962,7 +1093,7 @@ def run(args, vault, config=None):
                                for t in filtros_inline.split())
         if (len(terminos) > 1 and limit and limit > 0 and len(concepts) < limit
                 and not (filter_status or cyber_field or review_due or since or until
-                         or filtros_estrictos)):
+                         or filtros_estrictos or por_arista)):
             parciales = _parciales(universo, concepts, terminos, body_mode, filter_type,
                                    filtros_inline)
             puntuar(parciales, universo, query)
@@ -983,6 +1114,8 @@ def run(args, vault, config=None):
         print(json.dumps(concepts, ensure_ascii=False, indent=2))
     else:
         _print_table(concepts)
+        if por_arista and concepts:
+            _print_aristas(concepts, edge_dir)
         if parciales:
             print(f"\n({total} nota(s) con todas las palabras; se completó con {len(parciales)} "
                   f"que tienen algunas, marcadas «parcial»)")

@@ -704,7 +704,7 @@ def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: 
 
 
 @_mcp_tool()
-def search(query: str = "", type: str = "", status: str = "", cyber_field: str = "", cyber_value: str = "", todos: bool = False, json_output: bool = False, since: str = "", until: str = "", with_graph: bool = False, all_versions: bool = False, body: bool = False, limit: int | None = None) -> str:
+def search(query: str = "", type: str = "", status: str = "", cyber_field: str = "", cyber_value: str = "", todos: bool = False, json_output: bool = False, since: str = "", until: str = "", with_graph: bool = False, all_versions: bool = False, body: bool = False, limit: int | None = None, edge: str = "", edge_dir: str = "out", linked: str = "", linked_type: str = "", linked_status: str = "") -> str:
     """Substring search (AND over tokens, case-insensitive) in the OKF vault + pending tasks list (todos=true). FALLBACK — prefer traverse or index reads.
 
     With text in `query`, results are ORDERED BY RELEVANCE (BM25F over title,
@@ -745,10 +745,30 @@ def search(query: str = "", type: str = "", status: str = "", cyber_field: str =
     matches the query, a footer lists each one with its current version
     («<old> → vigente <new>») so you can read the current one instead.
 
+    ONE-HOP TYPED JOIN — the one call for "which X <edge> a Y that is <status>":
+    `edge` keeps notes that declare a typed edge of that type, and `linked`,
+    `linked_type`, `linked_status` constrain the note at the other end. Exact,
+    as declared in `links:` (a superseded note is NOT swapped for its current
+    version here, unlike traverse). The edges that matched are listed after the
+    table. Examples:
+    - plans that apply superseded decisions: type="Plan", edge="aplica",
+      linked_type="Decision", linked_status="reemplazada"
+    - cancelled tasks that applied a plan: type="Task", status="cancelada",
+      edge="aplica", linked="plans/<slug>"
+    - what depends on a note: edge="depende", linked="<slug>"
+    edge_dir="in" flips it: the result is the note that RECEIVES the edge.
+    `type`, `status`, `edge`, `linked`, `linked_type` and `linked_status`
+    accept several values separated by commas (status="pendiente,en-curso").
+
     Args:
         query: Search term (optional if using --todos or --type)
         type: Filter by type (Decision, Plan, Project, Insight, etc.)
         status: Filter by status (propuesta, aplicada, etc.)
+        edge: Typed edge the note must have (extiende, refina, fundamenta, aplica, depende, corrige)
+        edge_dir: "out" (default) the note declares the edge; "in" the note receives it
+        linked: Slug of the note at the other end of the edge
+        linked_type: Type of the note at the other end
+        linked_status: Status of the note at the other end
         cyber_field: cyber block field (outcome, sensor, target_metric.name)
         cyber_value: cyber field value (pending, success, failure)
         todos: If True, searches for pending - [ ] tasks
@@ -787,11 +807,23 @@ def search(query: str = "", type: str = "", status: str = "", cyber_field: str =
         args.append("--all-versions")
     if limit is not None:
         args += ["--limit", str(limit)]
+    if edge:
+        args += ["--edge", edge]
+    if edge_dir and edge_dir != "out":
+        args += ["--edge-dir", edge_dir]
+    if linked:
+        args += ["--linked", linked]
+    if linked_type:
+        args += ["--linked-type", linked_type]
+    if linked_status:
+        args += ["--linked-status", linked_status]
     return _run(args, tool_name="okf_search", params={
         "query": query, "type": type, "status": status,
         "cyber_field": cyber_field, "cyber_value": cyber_value,
         "todos": todos, "json_output": json_output,
         "since": since, "until": until, "body": body, "limit": limit,
+        "edge": edge, "edge_dir": edge_dir, "linked": linked,
+        "linked_type": linked_type, "linked_status": linked_status,
     })
 
 

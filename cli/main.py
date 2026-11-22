@@ -95,6 +95,16 @@ def build_parser():
                            help="Value for --cyber-field")
     sp_search.add_argument("--review-due", action="store_true", default=False,
                            help="Only concepts with cyber.review_on <= today")
+    sp_search.add_argument("--edge", type=str, default=None,
+                           help="Solo notas con una arista tipada de este tipo (o varios, con coma)")
+    sp_search.add_argument("--edge-dir", dest="edge_dir", choices=["out", "in"], default="out",
+                           help="out: la nota declara la arista (default); in: la recibe")
+    sp_search.add_argument("--linked", type=str, default=None,
+                           help="La nota del otro extremo de la arista (slug, o varios con coma)")
+    sp_search.add_argument("--linked-type", dest="linked_type", type=str, default=None,
+                           help="Tipo de la nota del otro extremo (o varios, con coma)")
+    sp_search.add_argument("--linked-status", dest="linked_status", type=str, default=None,
+                           help="Estado de la nota del otro extremo (o varios, con coma)")
     sp_search.add_argument("--limit", type=int, default=None,
                            help="With --query: show only the N most relevant notes "
                                 "(default 20 in the table, all in --json; 0 = all)")
