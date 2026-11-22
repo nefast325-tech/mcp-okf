@@ -115,7 +115,7 @@ class TestHTTPIntegration(unittest.TestCase):
             await rpc(ana, 'initialize', {'protocolVersion': '2025-03-26', 'capabilities': {},
                                          'clientInfo': {'name': 'review-fixture', 'version': '1'}})
             tools = await rpc(cora, 'tools/list')
-            self.assertEqual(len(tools['tools']), 20)
+            self.assertEqual(len(tools['tools']), 21)  # 20 + changes
             bad_host = await client.post(url, headers={
                 'Authorization': 'Bearer ' + ana, 'Host': 'untrusted.example.test',
                 'Accept': 'application/json, text/event-stream',
