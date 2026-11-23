@@ -117,9 +117,25 @@ def _canvas_destino(vault, path) -> Path:
     dest = Path(path)
     if not dest.is_absolute():
         dest = vault / dest
+    # La regla es «ningún symlink DENTRO del vault». El tramo de arriba puede pasar por
+    # symlinks legítimos (/var y /tmp en macOS, un ~/vaults que apunta a otro disco): el
+    # vault se resuelve acá, pero un destino absoluto llega como lo escribió quien llama
+    # (`--output /tmp/vault/mapas/x.canvas`, o el default de `generate_canvas` cuando se
+    # la llama con un vault sin resolver). Por eso se ubica la raíz
+    # del vault en la ruta TAL COMO VINO: el ancestro más alto que resuelve al vault. Comparar
+    # contra el vault resuelto no cortaba nunca y el recorrido seguía hasta «/var».
+    raiz = None
+    for ancestro in (dest, *dest.parents):
+        try:
+            if ancestro.resolve() == vault:
+                raiz = ancestro
+        except OSError:
+            continue
+    if raiz is None:
+        raise PermissionError(f"canvas: destino fuera del vault: {path}")
     # Comprobar antes de resolve: después se pierde la identidad del symlink.
     for component in (dest, *dest.parents):
-        if component == vault:
+        if component == raiz:
             break
         if component.is_symlink():
             raise PermissionError(f"canvas: el destino atraviesa un symlink: {path}")
