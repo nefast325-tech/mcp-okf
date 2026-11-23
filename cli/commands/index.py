@@ -279,6 +279,14 @@ def _generate_index(dir_path, vault):
                 if "](" not in body_desc and not body_desc.startswith("* [") and not body_desc.startswith("- ["):
                     purpose = body_desc
 
+    # Las skills no llevan prosa ni frontmatter en su index.md: sin esto, el
+    # índice del directorio queda sin description y el index padre avisa
+    # «no description in index.md» por cada skill (6 en OKF-Vault).
+    if not purpose:
+        skill_md = dir_path / "SKILL.md"
+        if skill_md.exists():
+            purpose = _extract_frontmatter_field(skill_md, "description")
+
     lines = []
     if purpose:
         # Safety: si la descripción es excesivamente larga, no la ponemos en frontmatter
