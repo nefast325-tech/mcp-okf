@@ -992,6 +992,43 @@ def stale(json_output: bool = False) -> str:
 
 
 @_mcp_tool()
+def changes(since: str = "", until: str = "", type: str = "", kind: str = "", to_status: str = "", note: str = "", limit: int | None = None, json_output: bool = False) -> str:
+    """What changed in the vault and when, read from its git history (newest first).
+
+    One line per change: date, note, what changed, author. Kinds: nueva (note
+    created), estado ("aceptada → reemplazada"), reemplazo (the note started to
+    replace another), aristas, cabecera, movida, borrada, texto (body only; hidden
+    unless asked). Use it for "what changed since <date>", "when was X cancelled",
+    "which decisions were superseded in October":
+    `since`/`until` are dates (2026-10-29, inclusive); `type` the note type;
+    `to_status` keeps status changes INTO that status; `note` gives the history of
+    one note (slug); `kind` keeps those kinds. Filters take several values
+    separated by commas. Shows the 50 most recent (limit=0 for all).
+    """
+    args = ["changes"]
+    if since:
+        args += ["--since", since]
+    if until:
+        args += ["--until", until]
+    if type:
+        args += ["--type", type]
+    if kind:
+        args += ["--kind", kind]
+    if to_status:
+        args += ["--to-status", to_status]
+    if note:
+        args += ["--note", note]
+    if limit is not None:
+        args += ["--limit", str(int(limit))]
+    if json_output:
+        args.append("--json")
+    return _run(args, tool_name="okf_changes", params={
+        "since": since, "until": until, "type": type, "kind": kind,
+        "to_status": to_status, "note": note, "limit": limit,
+    })
+
+
+@_mcp_tool()
 def new(type: str, title: str = "", description: str = "", tags: str = "", status: str = "", cyber: bool = False, dry_run: bool = False, body: str = "", links: str = "", entity: str = "", filename: str = "", fields: list | None = None, omit_timestamps: bool = False) -> str:
     """Creates a new concept in the OKF vault with consistent frontmatter.
 

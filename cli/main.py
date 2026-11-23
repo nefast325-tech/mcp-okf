@@ -16,6 +16,7 @@ Commands:
     board       JSON of the vault as a board (Kanban, tasks, health per layer)
     dashboard-snapshot  Generate dashboard.json + daily snapshot
     stale       Semantic staleness detector
+    changes     What changed in the vault, read from git history
     review      Cybernetic review (expired review_on)
     audit       Audit frontmatter of all concepts
     validate    Strict YAML pre-commit validation (no regex fallback)
@@ -371,6 +372,20 @@ def build_parser():
                               "(default: config features.trace_db_path or "
                               "~/.hermes/cognitive-trace.db)")
 
+    # ── changes ──
+    sp_changes = subparsers.add_parser("changes", help="What changed in the vault (from git history)")
+    sp_changes.add_argument("--since", type=str, default=None, help="Desde esta fecha (ISO 8601, inclusive)")
+    sp_changes.add_argument("--until", type=str, default=None, help="Hasta esta fecha (ISO 8601, inclusive)")
+    sp_changes.add_argument("--type", dest="filter_type", type=str, default=None,
+                            help="Solo notas de este tipo (o varios, con coma)")
+    sp_changes.add_argument("--kind", type=str, default=None,
+                            help="nueva, estado, reemplazo, aristas, cabecera, movida, borrada, texto (o varios)")
+    sp_changes.add_argument("--to-status", dest="to_status", type=str, default=None,
+                            help="Solo cambios de estado HACIA este estado (o varios, con coma)")
+    sp_changes.add_argument("--note", type=str, default=None, help="La historia de una sola nota (slug)")
+    sp_changes.add_argument("--limit", type=int, default=None, help="Máximo de cambios (default 50; 0 = todos)")
+    sp_changes.add_argument("--json", action="store_true", default=False, help="JSON output")
+
     # ── stale ──
     sp_stale = subparsers.add_parser("stale", help="Semantic staleness detector")
     sp_stale.add_argument("--json", action="store_true", default=False,
@@ -541,6 +556,10 @@ def main(argv=None):
 
         elif command == "dashboard-snapshot":
             from cli.commands.dashboard_snapshot import run
+            _exit = run(args, vault, config) or 0
+
+        elif command == "changes":
+            from cli.commands.changes import run
             _exit = run(args, vault, config) or 0
 
         elif command == "stale":
