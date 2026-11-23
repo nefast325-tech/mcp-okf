@@ -6,6 +6,40 @@ Todas las modificaciones notables al servidor MCP OKF. Formato basado en [Keep a
 ## [Unreleased]
 
 ---
+## [2026-11-23] — v0.4.37
+
+Cuatro PRs (#60–#63): el salto tipado de `search`, el perfil de herramientas, `changes` y el symlink de arriba del vault en `canvas`. Suite verificada: **821 tests**.
+
+### Salto tipado en `search` (#60)
+
+- `search --edge/--edge-dir/--linked/--linked-type/--linked-status`: un salto exacto sobre `links:` tal como está declarado, con el tipo y el estado de la nota del otro extremo. Responde en una llamada lo que antes pedía armar el conjunto a mano: «planes que aplican decisiones reemplazadas», «tareas canceladas que aplicaban tal plan», «qué depende de tal sistema».
+- `--edge-dir in` invierte la dirección (la nota del resultado recibe la arista). `--type`, `--status` y los filtros de arista aceptan varios valores con coma.
+- Cada resultado lleva `edges` en JSON y la tabla lista al final las aristas que cumplieron, sin `.md` (el trazador toma un token `.md` como nodo resultado).
+- Un tipo de arista desconocido, o un slug inexistente o ambiguo, es un error que se dice con la lista de válidos. No se combina con `--todos` y no se rellena con parciales.
+
+### Perfil de herramientas (#61)
+
+- `--tools` / `OKF_TOOLS` / `mcp.tools` dejan registradas solo las herramientas nombradas; gana el argumento, después el entorno, después la configuración del vault. Perfil `consulta` = `read`, `search`, `traverse`, `graph`, `todos`; se suman herramientas sueltas y `-nombre` quita del conjunto completo.
+- Un nombre mal escrito **aborta al arrancar** con la lista de perfiles y herramientas válidas: esconder una herramienta en silencio sería peor que no arrancar. `OKF_READONLY` sigue mandando dentro del perfil.
+- Descripciones de las tools reescritas: **22 478 → 18 288 caracteres** (~1047 tokens menos por turno) con una herramienta más registrada.
+
+### `changes` (#62)
+
+- `changes` lee el historial de git del vault y dice qué cambió: `nueva`, `estado` («aceptada → reemplazada»), `reemplazo` (arista `corrige` nueva), `aristas`, `cabecera`, `movida`, `borrada` y `texto`.
+- Filtros `--since`/`--until` (inclusive, por día en hora de Colombia), `--type`, `--kind`, `--to-status`, `--note` y `--limit`. Las ediciones de solo texto se cuentan al pie y no se listan salvo que se pidan.
+- Solo lectura, sin nada fuera de git: si el vault no es un repositorio lo dice y sale con error. **2.3 s** sobre 1337 commits y 2394 cambios; 0.16 s con `--since`.
+
+### `canvas`: symlink arriba del vault (#63)
+
+- `_canvas_destino` ubica la raíz del vault en la ruta **tal como vino**: un symlink por encima del vault (`/var` y `/tmp` en macOS, un `~/vaults` enlazado a otro disco) ya no se confunde con un escape. Antes, un destino absoluto nunca coincidía con el vault resuelto y el recorrido seguía hasta ese symlink.
+- Un symlink **dentro** del vault se sigue rechazando, incluido el que vuelve a la raíz del vault y el archivo `.canvas` que es symlink.
+
+### Verificación
+
+- **821 tests OK** (785 antes de la tanda), CI verde en 3.11 y 3.12.
+- Contra el vault real: `search --edge` devuelve aristas con tipo y estado del otro extremo y `--edge-dir in` invierte bien; `changes` 0.16 s con `--since` y 2.3 s con todo el historial, 0 duplicados; el perfil `consulta` registra 5 de 21 herramientas; `canvas` acepta el symlink de arriba y rechaza el interno, el de fuera y la extensión equivocada.
+
+---
 ## [2026-11-20] — v0.4.36
 
 ### Servicio HTTP y revisión de seguridad (#59)
