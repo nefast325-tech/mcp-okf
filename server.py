@@ -110,6 +110,46 @@ _SCOPE = normalize_scope(_argv_value("--scope") or os.environ.get("OKF_SCOPE", "
 if _SCOPE:
     CLI += ["--scope", _SCOPE]
 
+# ── Perfil de herramientas ──────────────────────────────────────────────────
+# Cada herramienta registrada le cuesta contexto al agente en CADA turno (nombre,
+# descripción y esquema). `--tools <lista>` (o OKF_TOOLS, o `mcp.tools` en
+# .okf.config.yaml; gana el primero que esté) deja registradas solo las que se
+# nombran: perfiles y/o herramientas, separados por coma. Con «-nombre» se
+# quitan del conjunto completo. Sin nada, se registran todas, como siempre.
+#   --tools consulta            read, search, traverse, graph, todos
+#   --tools consulta,health     el perfil más una herramienta
+#   --tools -canvas,-graph_command   todas menos esas dos
+_PERFILES = {
+    "consulta": ("read", "search", "traverse", "graph", "todos"),
+}
+
+
+def _leer_perfil():
+    crudo = _argv_value("--tools") or os.environ.get("OKF_TOOLS", "")
+    if not crudo:
+        crudo = (_config._data.get("mcp") or {}).get("tools") or ""
+    if isinstance(crudo, (list, tuple)):
+        crudo = ",".join(str(x) for x in crudo)
+    partes = [x.strip() for x in str(crudo).split(",") if x.strip()]
+    incluir, quitar = set(), set()
+    for parte in partes:
+        if parte.startswith("-"):
+            quitar.add(parte[1:])
+        else:
+            incluir.update(_PERFILES.get(parte, (parte,)))
+    return (incluir or None), quitar
+
+
+_TOOLS_INCLUIR, _TOOLS_QUITAR = _leer_perfil()
+_TOOLS_DEFINIDAS = set()
+
+
+def _tool_en_perfil(nombre: str) -> bool:
+    if nombre in _TOOLS_QUITAR:
+        return False
+    return _TOOLS_INCLUIR is None or nombre in _TOOLS_INCLUIR
+
+
 # Tools que escriben en el vault (o que exponen el host). Con OKF_READONLY no
 # se registran: quedan invisibles al agente.
 _WRITE_TOOLS = frozenset({
@@ -158,8 +198,11 @@ def _seal_output(output: str, tool_name: str, returncode: int, args: list[str] |
 def _mcp_tool():
     """Registra la tool solo si la política de acceso lo permite."""
     def _decorator(fn):
+        _TOOLS_DEFINIDAS.add(fn.__name__)
         if _READONLY and fn.__name__ in _WRITE_TOOLS:
             return fn  # definida pero NO registrada
+        if not _tool_en_perfil(fn.__name__):
+            return fn  # fuera del perfil pedido (--tools / OKF_TOOLS / mcp.tools)
         # Sella el docstring con el vault servido: el schema llega al agente
         # ANTES de la llamada, así elegir el prefijo equivocado es visible en
         # lugar de silencioso (el docstring es idéntico en todas las instancias).
@@ -626,43 +669,21 @@ def _run(args: list[str], tool_name: str = "unknown", params: dict | None = None
 
 @_mcp_tool()
 def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: bool = False, json_output: bool = False, seeds: str = "", edge_type: str = "", filter: bool = False, all_versions: bool = False, compact: bool = False, budget: int | None = None) -> str:
-    """Semantic traversal of the OKF graph. Returns concept frontmatter + neighborhood (wikilinks, backlinks, cyber.corrects).
+    """Walk the typed graph from a note: its neighbours by typed edge and wikilink, `depth` hops.
 
-    PRIMARY USE for querying the vault. Prefer over search.
+    `slug` (or `seeds`, comma-separated) and `edge_type` are required. edge_type is the
+    relation you are exploring (extiende, refina, fundamenta, aplica, depende, corrige);
+    it only orders the output unless filter=True, which keeps just that type.
+    direction: "out" (what the note points to), "in" (what points to it) or "both".
+    compact=True gives one line per node (about 4x fewer tokens). `budget` caps the
+    nodes returned (default 100, 0 = no cap); a «✂️» line says how many were left out.
 
-    ONTOLOGICAL SEMANTICS (Decision "Every traverse is an ontological search", 2026-08-01):
-    edge_type is MANDATORY — declares the relationship explored (annotation). By default does NOT
-    filter: returns the full neighborhood labeled, and sorts edges of the declared
-    type first. Pass filter=True only for explicit exclusion (a single type).
+    A superseded note is walked as its current version. An edge reached that way is
+    marked «heredada»: it was declared towards the OLD note, so do not count it as an
+    edge of the current one. all_versions=True walks every note as it is.
 
-    Args:
-        slug: Concept slug (e.g.: 'grafo-cibernetico-marco-teorico' or 'frameworks/tp3-cibernetico')
-        depth: Traversal depth (default 2)
-        direction: 'both' (default), 'out' (outgoing only), 'in' (incoming only)
-        no_cyber: If True, does not follow cyber.corrects/corrected_by edges
-        json_output: If True, JSON output for programmatic consumption
-        seeds: Comma-separated slugs for multiple origins (union + deduplication).
-               e.g.: 'frameworks/tp3-cibernetico,decisions/description-cibernetico-okf'
-        edge_type: MANDATORY — ontological type explored (extiende, refina, fundamenta,
-                   aplica, depende, corrige). Annotates without filtering.
-        filter: If True, edge_type excludes edges not of that type (explicit exclusion).
-        all_versions: If True, walks superseded notes as they are. By default a note in
-                      its replaced state is skipped to its current version (corrige chain).
-                      An edge reached that way is marked «heredada»: it was declared with
-                      the replaced note named after «♻️ vigente de:», NOT with the current
-                      version shown. Do not count it as an edge the current version
-                      declares (e.g. "which notes extend X", "which accepted decisions
-                      does this system ground"); name it apart, as the current version of
-                      the replaced one.
-        compact: If True, one line per node (no title, tags or score). About 4x fewer
-                 tokens than the default output.
-        budget: How many nodes to return at most. Unset: the vault's cap
-                (`traverse.budget` in .okf.config.yaml, 100 nodes by default); when
-                that cap cuts, a «✂️ … quedaron fuera» line says how many were left
-                out. 0: no cap (e.g. to list a complete set around a note that
-                hundreds of notes point to). N: stop at N. The receipt at the end
-                (`📎 recibo:` / JSON key `receipt`) says how many were reachable, the
-                bytes and the approximate tokens of the answer.
+    To list "which notes of type T or status S point to X", search(edge=..., linked=...)
+    answers in one call.
     """
     if not edge_type or not edge_type.strip():
         return "[error] traverse requires edge_type: every traverse is an ontological search — declare the explored type (extiende|refina|fundamenta|aplica|depende|corrige). See Decision 2026-08-01."
@@ -705,80 +726,33 @@ def traverse(slug: str = "", depth: int = 2, direction: str = "both", no_cyber: 
 
 @_mcp_tool()
 def search(query: str = "", type: str = "", status: str = "", cyber_field: str = "", cyber_value: str = "", todos: bool = False, json_output: bool = False, since: str = "", until: str = "", with_graph: bool = False, all_versions: bool = False, body: bool = False, limit: int | None = None, edge: str = "", edge_dir: str = "out", linked: str = "", linked_type: str = "", linked_status: str = "") -> str:
-    """Substring search (AND over tokens, case-insensitive) in the OKF vault + pending tasks list (todos=true). FALLBACK — prefer traverse or index reads.
+    """Find notes by text and by fields. Returns a table: FILE, TYPE, STATUS, DESCRIPTION.
 
-    With text in `query`, results are ORDERED BY RELEVANCE (BM25F over title,
-    description, tags and body; a term that starts a word counts, one inside
-    another word barely does) and the table shows the `limit` most relevant
-    (default 20) with a footer saying how many more matched. JSON is exhaustive
-    when limit is omitted; an explicit limit (including 20) also caps JSON.
-    Ask limit=0 to see them all (e.g. to list a complete set). Without text (only type,
-    status or date filters) every match is listed, in path order.
+    Text: every word of `query` must appear in the title, description or tags (accents
+    and case ignored). body=True also looks in the body and says where (line, section).
+    Ordered by relevance, the top `limit` (20; 0 = all). When few notes have all the
+    words, others with some of them are added, marked «parcial».
 
-    Accents and case don't matter («pagina» finds «Página»). When fewer than
-    `limit` notes have ALL the words of a multi-word query, the table is
-    completed with notes that have at least half of them, after the full
-    matches and marked "(parcial: k/n palabras)" (match="partial" in JSON):
-    read them knowing a word is missing. Not completed when filtering by
-    status, cyber or dates.
+    Fields: `type` and `status` are exact. With no query they list EVERY match: use them
+    to list or count a set (type="Task", status="cancelada"). `since`/`until` filter by
+    date (ISO 8601).
 
-    NOT full-text (no FTS5): each token of `query` must appear in the title,
-    description or tags of the note. With body=True each token may also match
-    the note body; body-only matches come after frontmatter matches, marked
-    "(cuerpo L<n> · <k> menc. · § <section>)" in the table (field
-    match="frontmatter"|"body" in JSON). Each body match also says WHERE:
-    `line` (file line of the first mention, same numbering as `read`, so
-    `read(slug, offset=line)` lands there), `snippet` (that line, ≤160 chars),
-    `section` (last Markdown heading before it, or null) and `matches` (how
-    many body lines mention the term). The body itself is never returned.
-    Without body=True, when fewer than 5 notes match, a footer says how many
-    more mention the query only in their body.
+    Typed join in one call, for "which X <edge> a Y that is <status>": `edge` keeps the
+    notes that declare that typed edge (extiende, refina, fundamenta, aplica, depende,
+    corrige); `linked` (slug), `linked_type` and `linked_status` constrain the note at
+    the other end; edge_dir="in" returns the note that RECEIVES the edge. It is exact,
+    as declared: a superseded note is not swapped for its current version. Examples:
+    plans that apply superseded decisions: type="Plan", edge="aplica",
+    linked_type="Decision", linked_status="reemplazada". Cancelled tasks that applied a
+    plan: type="Task", status="cancelada", edge="aplica", linked="plans/<slug>". What
+    depends on a note: edge="depende", linked="<slug>". The matching edges are listed
+    after the table.
 
-    Use only when:
-    - Traversal doesn't find a path in ≤6 hops
-    - You need to filter by specific fields (type, status, cyber)
-    - You're looking for pending tasks: prefer the dedicated `todos` tool,
-      or set todos=true here
-    - You need to filter by date range (--since, --until)
+    `type`, `status`, `edge` and the `linked*` filters take several values separated by
+    commas (status="pendiente,en-curso").
 
-    Superseded notes (status reemplazada/superada) are hidden; if any of them
-    matches the query, a footer lists each one with its current version
-    («<old> → vigente <new>») so you can read the current one instead.
-
-    ONE-HOP TYPED JOIN — the one call for "which X <edge> a Y that is <status>":
-    `edge` keeps notes that declare a typed edge of that type, and `linked`,
-    `linked_type`, `linked_status` constrain the note at the other end. Exact,
-    as declared in `links:` (a superseded note is NOT swapped for its current
-    version here, unlike traverse). The edges that matched are listed after the
-    table. Examples:
-    - plans that apply superseded decisions: type="Plan", edge="aplica",
-      linked_type="Decision", linked_status="reemplazada"
-    - cancelled tasks that applied a plan: type="Task", status="cancelada",
-      edge="aplica", linked="plans/<slug>"
-    - what depends on a note: edge="depende", linked="<slug>"
-    edge_dir="in" flips it: the result is the note that RECEIVES the edge.
-    `type`, `status`, `edge`, `linked`, `linked_type` and `linked_status`
-    accept several values separated by commas (status="pendiente,en-curso").
-
-    Args:
-        query: Search term (optional if using --todos or --type)
-        type: Filter by type (Decision, Plan, Project, Insight, etc.)
-        status: Filter by status (propuesta, aplicada, etc.)
-        edge: Typed edge the note must have (extiende, refina, fundamenta, aplica, depende, corrige)
-        edge_dir: "out" (default) the note declares the edge; "in" the note receives it
-        linked: Slug of the note at the other end of the edge
-        linked_type: Type of the note at the other end
-        linked_status: Status of the note at the other end
-        cyber_field: cyber block field (outcome, sensor, target_metric.name)
-        cyber_value: cyber field value (pending, success, failure)
-        todos: If True, searches for pending - [ ] tasks
-        json_output: If True, JSON output
-        since: Filter by timestamp >= date (ISO 8601, inclusive, e.g. "2026-07-20")
-        until: Filter by timestamp <= date (ISO 8601, inclusive)
-        with_graph: If True, includes ## Detected relationships section with typed edges between results
-        body: If True, also matches each token against the note body (after the frontmatter)
-        limit: With text in query, maximum notes to show (0 = all). Omitted/None
-            inherits CLI defaults: table 20, JSON all. Explicit 20 caps either format.
+    Superseded notes are hidden; a footer names each one with its current version
+    (all_versions=True shows them). Footers also say when results were cut: read them.
     """
     args = ["search"]
     if query:
@@ -829,16 +803,11 @@ def search(query: str = "", type: str = "", status: str = "", cyber_field: str =
 
 @_mcp_tool()
 def todos(all: bool = False, aging: bool = False, json_output: bool = False) -> str:
-    """Lists pending tasks (- [ ] checkboxes) in the OKF vault, grouped by project.
+    """Pending checkboxes (- [ ]) in the vault, grouped by project.
 
-    USE THIS tool when asked about pending tasks, todos, open checkboxes or
-    "tareas pendientes" — NOT health/review/stale (those are diagnostics, not
-    task lists). Wrapper around search(todos=true).
-
-    Args:
-        all: Include completed (- [x]) tasks too
-        aging: Add per-task age via git blame (fresh ≤3d / aging 3-7d / stale >7d)
-        json_output: If True, JSON output
+    For checklist items only. A note of type Task has its own status: list those with
+    search(type="Task", status=...). all=True includes done items; aging=True adds how
+    old each one is.
     """
     args = ["search", "--todos"]
     if all:
@@ -854,26 +823,13 @@ def todos(all: bool = False, aging: bool = False, json_output: bool = False) -> 
 
 @_mcp_tool()
 def read(slug: str, offset: int = 1, limit: int = 500, no_touch: bool = False) -> str:
-    """Reads a concept from the OKF vault and increments its read counter.
+    """Read a note: its frontmatter and body, from line `offset`, up to `limit` lines.
 
-    Use to read the full body of a concept after traverse
-    confirms its relevance. NEVER use system read_file on vault .md files.
-    If the concept is superseded, the first line says so and names its
-    current version («♻️ … Versión vigente: <slug>»): read that one.
-    If a live concept rests on a superseded or dead one (typed edges
-    extiende/fundamenta/depende/aplica in `links:`), the output opens with
-    one «⚠️ se apoya (<edge>) en <slug>, reemplazada → vigente <slug>» line
-    per broken edge (or «cancelada (muerta, sin sucesora)»), then the body:
-    reason from the current version, not from the superseded one.
-    The output ends with «🔖 rev: <hex>» (under [stderr]): the note's
-    revision. Pass it as `base_revision` to `edit` when you replace its body
-    or links.
-
-    Args:
-        slug: Concept slug (e.g.: 'decisions/mcp-okf-cli-como-correccion-de-sesgo-de-toolset')
-        offset: Starting line (1-indexed, default 1)
-        limit: Max lines (default 500)
-        no_touch: If True, does not increment the read counter
+    Use it instead of opening the .md file. The first lines warn when the note is
+    superseded («♻️ ... Versión vigente: <slug>»: read that one) or rests on a superseded
+    or dead note («⚠️ se apoya ...»): reason from the current version. The output ends
+    with «🔖 rev: <hex>», the revision to pass to `edit` as `base_revision`.
+    no_touch=True skips the read counter.
     """
     args = ["read", slug, "--offset", str(offset), "--limit", str(limit)]
     if no_touch:
@@ -885,26 +841,12 @@ def read(slug: str, offset: int = 1, limit: int = 500, no_touch: bool = False) -
 
 @_mcp_tool()
 def graph(command: str, arg: str = "", edge_type: str = "") -> str:
-    """Analyzes the wikilink graph, typed edges, and tags of the OKF vault.
+    """Structure of the vault graph. `command` is one of:
 
-    Useful for questions about relationships, dependencies, structure, or thematic grouping.
-
-    Args:
-        command: Graph command. One of:
-            - 'stats': overall status (total nodes, orphans, tags, typed edges)
-            - 'orphans': concepts without wikilinks
-            - 'hubs': most referenced concepts
-            - 'backlinks': concepts that reference ARG (requires arg)
-            - 'deps': concepts referenced by ARG (requires arg)
-            - 'tags': all tags or filter by ARG
-            - 'bridges': tags that connect wikilink clusters
-            - 'cluster': vault clustering
-            - 'dump': full graph dump
-            - 'dirs': directory tree with concept counts
-            - 'types': concept distribution by type (frontmatter)
-            - 'suggest-edge-types': suggests edge types for existing wikilinks
-        arg: Additional argument (concept slug for backlinks/deps, tag name for tags)
-        edge_type: Filter backlinks/deps by edge type (extiende, refina, etc.)
+    backlinks <arg>: notes that link to ARG (`edge_type` keeps one typed edge).
+    deps <arg>: notes ARG links to. impact <arg>: what to review if ARG changes.
+    hubs, orphans, stats, cluster, bridges, dump: shape of the whole graph.
+    tags [arg], dirs (folders with counts), types (notes per type).
     """
     allowed = {"stats", "orphans", "hubs", "backlinks", "deps", "tags", "bridges",
                "cluster", "path", "dump", "dirs", "types", "impact", "impact-batch", "suggest-edge-types"}
@@ -1439,6 +1381,13 @@ def review() -> str:
 _init_db()
 
 def _main():
+    # Un nombre mal escrito en el perfil escondería una herramienta en silencio.
+    pedidas = (_TOOLS_INCLUIR or set()) | _TOOLS_QUITAR
+    desconocidas = sorted(pedidas - _TOOLS_DEFINIDAS)
+    if desconocidas:
+        sys.exit(f"okf: herramienta o perfil desconocido en --tools / OKF_TOOLS / mcp.tools: "
+                 f"{', '.join(desconocidas)}. Perfiles: {', '.join(sorted(_PERFILES))}. "
+                 f"Herramientas: {', '.join(sorted(_TOOLS_DEFINIDAS))}.")
     nombre = _argv_value("--crear-llave")
     if nombre is not None:
         import servicio
