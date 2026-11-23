@@ -2,7 +2,7 @@
 
 Cada herramienta registrada pesa en el contexto del agente en cada turno. Sin
 perfil el server registra todas, como siempre. `consulta` deja las cinco de
-consultar (read, search, traverse, graph, todos); se pueden sumar herramientas
+consultar (read, search, traverse, graph, todos, changes); se pueden sumar herramientas
 sueltas y quitar con «-nombre». El argumento gana al entorno y este a la
 configuración del vault. Un nombre mal escrito aborta al arrancar: esconder una
 herramienta en silencio sería peor que no arrancar.
@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-CONSULTA = ["graph", "read", "search", "todos", "traverse"]
+CONSULTA = ["changes", "graph", "read", "search", "todos", "traverse"]
 
 
 class ToolsPerfilTest(unittest.TestCase):

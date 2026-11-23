@@ -141,6 +141,37 @@ class ChangesTest(unittest.TestCase):
         self.assertIn(("2026-10-30", "plans/dos", "movida", "movida desde plans/uno"), cambios)
         self.assertIn(("2026-10-30", "decisions/nueva", "borrada", "borrada"), cambios)
 
+    def test_un_merge_cuenta_una_vez_en_la_fecha_del_merge(self):
+        # Lo que entra por un PR se lee contra el primer padre: un cambio en la fecha del
+        # merge, no otro más en la fecha del commit de la rama.
+        self._git("checkout", "-q", "-b", "rama")
+        self._escribir("plans/uno.md", _nota("Plan", "Uno con otro nombre", "pendiente",
+                                           [("decisions/nueva.md", "aplica")], cuerpo="Cuerpo con una frase más."))
+        self._commit("en la rama", "Beto", "2026-10-30T09:00:00-05:00")
+        self._git("checkout", "-q", "main")
+        fecha = "2026-10-31T09:00:00-05:00"
+        self._git("-c", "user.name=Ana", "-c", "user.email=a@example.test", "merge", "-q", "--no-ff",
+                  "-m", "merge de la rama", "rama", env={"GIT_AUTHOR_DATE": fecha, "GIT_COMMITTER_DATE": fecha})
+        self.assertEqual(self._cambios(since="2026-10-30"),
+                         [("2026-10-31", "plans/uno", "estado", "estado: cancelada → pendiente")])
+        rc, out, err = self._run(since="2026-10-30")
+        self.assertEqual(json.loads(out)[0]["subject"], "merge de la rama")
+
+    def test_md_en_medio_del_nombre_no_se_borra(self):
+        # Solo se quita la extensión: «.md» dentro del nombre es parte del slug.
+        self._escribir("decisions/usar-agents.md-como-guia.md", _nota("Decision", "Guía", "aceptada"))
+        self._escribir("plans/uno.md", _nota("Plan", "Uno con otro nombre", "cancelada",
+                                           [("decisions/usar-agents.md-como-guia.md", "aplica")],
+                                           cuerpo="Cuerpo con una frase más."))
+        self._commit("guía", "Ana", "2026-10-30T09:00:00-05:00")
+        cambios = self._cambios(since="2026-10-30")
+        self.assertIn(("2026-10-30", "decisions/usar-agents.md-como-guia", "nueva", "nueva (Decision, aceptada)"),
+                      cambios)
+        self.assertIn(("2026-10-30", "plans/uno", "aristas",
+                       "aristas: +aplica decisions/usar-agents.md-como-guia, −aplica decisions/nueva"), cambios)
+        self.assertEqual([c[1] for c in self._cambios(note="usar-agents.md-como-guia.md")],
+                         ["decisions/usar-agents.md-como-guia"])
+
     def test_errores_que_se_dicen(self):
         rc, out, err = self._run(kind="estdo")
         self.assertEqual(rc, 1)

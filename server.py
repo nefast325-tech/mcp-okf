@@ -116,11 +116,11 @@ if _SCOPE:
 # .okf.config.yaml; gana el primero que esté) deja registradas solo las que se
 # nombran: perfiles y/o herramientas, separados por coma. Con «-nombre» se
 # quitan del conjunto completo. Sin nada, se registran todas, como siempre.
-#   --tools consulta            read, search, traverse, graph, todos
+#   --tools consulta            read, search, traverse, graph, todos, changes
 #   --tools consulta,health     el perfil más una herramienta
 #   --tools -canvas,-graph_command   todas menos esas dos
 _PERFILES = {
-    "consulta": ("read", "search", "traverse", "graph", "todos"),
+    "consulta": ("read", "search", "traverse", "graph", "todos", "changes"),
 }
 
 
@@ -841,12 +841,13 @@ def read(slug: str, offset: int = 1, limit: int = 500, no_touch: bool = False) -
 
 @_mcp_tool()
 def graph(command: str, arg: str = "", edge_type: str = "") -> str:
-    """Structure of the vault graph. `command` is one of:
+    """Structure of the vault graph, e.g. graph(command="backlinks", arg="<slug>").
 
-    backlinks <arg>: notes that link to ARG (`edge_type` keeps one typed edge).
-    deps <arg>: notes ARG links to. impact <arg>: what to review if ARG changes.
-    hubs, orphans, stats, cluster, bridges, dump: shape of the whole graph.
-    tags [arg], dirs (folders with counts), types (notes per type).
+    `command` (these are values of `command`, not tools):
+    "backlinks": notes that link to `arg` (`edge_type` keeps one typed edge).
+    "deps": notes `arg` links to. "impact": what to review if `arg` changes.
+    "hubs", "orphans", "stats", "cluster", "bridges", "dump": shape of the whole graph.
+    "tags" (optional `arg`), "dirs" (folders with counts), "types" (notes per type).
     """
     allowed = {"stats", "orphans", "hubs", "backlinks", "deps", "tags", "bridges",
                "cluster", "path", "dump", "dirs", "types", "impact", "impact-batch", "suggest-edge-types"}

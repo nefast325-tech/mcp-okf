@@ -103,7 +103,7 @@ def _ficha(texto):
     except Exception:
         fm = None
     fm = fm if isinstance(fm, dict) else {}
-    aristas = {(l["type"], str(l["target"]).replace(".md", "")) for l in extract_typed_links(None, fm=fm)}
+    aristas = {(l["type"], _slug(str(l["target"]))) for l in extract_typed_links(None, fm=fm)}
     fin = texto.find("\n---", 3)
     return {"type": str(fm.get("type") or ""), "status": str(fm.get("status") or ""),
             "title": str(fm.get("title") or ""), "description": str(fm.get("description") or ""),
@@ -230,7 +230,7 @@ def run(args, vault, config=None):
         cambios = [c for c in cambios if c["date"] <= until[:10]]
 
     tipos, hacia = _valores(getattr(args, "filter_type", None)), _valores(getattr(args, "to_status", None))
-    nota = (getattr(args, "note", None) or "").strip().replace(".md", "")
+    nota = _slug((getattr(args, "note", None) or "").strip())
     solo_texto = sum(1 for c in cambios if c["kind"] == "texto")
     if tipos:
         cambios = [c for c in cambios if c["type"].lower() in tipos]
