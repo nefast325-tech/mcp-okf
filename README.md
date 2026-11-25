@@ -1,6 +1,6 @@
 # OKF MCP Server
 
-MCP (Model Context Protocol) server for OKF vaults. Exposes 17 tools that let AI agents (Claude Code, Hermes, Cursor, etc.) query, create, and analyze concepts in a knowledge vault — no direct filesystem access needed.
+MCP (Model Context Protocol) server for OKF vaults. Exposes 21 tools that let AI agents (Claude Code, Hermes, Cursor, etc.) query, create, and analyze concepts in a knowledge vault — no direct filesystem access needed.
 
 ## What is OKF?
 
@@ -159,10 +159,11 @@ vault and are not registered with `--readonly`.
 
 | Tool | Description |
 |---|---|
-| `traverse` | Semantic graph traversal — **primary query tool**. `edge_type` is required; capped at `traverse.budget` nodes (100) unless `budget` says otherwise |
+| `traverse` | Follow typed relations from a note: neighbours by edge, `depth` hops. `edge_type` is required; capped at `traverse.budget` nodes (100) unless `budget` says otherwise |
 | `read` | Read a concept (frontmatter + body); reports the note's revision for `edit` |
-| `search` | Text search ranked by relevance, 20 results by default — **fallback**, prefer traverse. Also filters by type, status, dates and cyber fields |
+| `search` | Find notes by text (ranked, 20 by default) or by fields: type, status, dates, cyber fields, and a typed one-hop join (`edge`, `edge_dir`, `linked`, `linked_type`, `linked_status`) |
 | `todos` | Pending `- [ ]` tasks, grouped by project |
+| `changes` | What changed in the vault, read from git history: new notes, status changes, replacements, edges |
 | `new` ✏️ | Create a concept with validated frontmatter (create-only) |
 | `edit` ✏️ | Update a concept (merge semantics) — the only way to change an existing note |
 | `graph` | Graph analysis: orphans, hubs, backlinks, deps, clusters, paths |
@@ -180,15 +181,33 @@ vault and are not registered with `--readonly`.
 | `graph_command` ✏️ | Commands to the Cognitive Trace plugin in Obsidian |
 | `trace` ✏️ | Reference trace across all ecosystem layers |
 
+### Tool profiles
+
+Every registered tool costs context in every turn. `--tools <list>` (or `OKF_TOOLS`, or
+`mcp.tools` in `.okf.config.yaml`; the first one set wins) registers only the tools and
+profiles named, comma-separated; `-name` removes one from the full set. Without it, all
+tools are registered, as before. A misspelled name aborts at startup.
+
+| Profile | Tools |
+|---|---|
+| `consulta` | `read`, `search`, `traverse`, `graph`, `todos`, `changes` |
+
+```bash
+okf-mcp --tools consulta              # a read-only agent
+okf-mcp --tools consulta,new,edit     # the profile plus writing
+okf-mcp --tools -canvas,-trace        # everything except those two
+```
+
 ### How an agent should use them
 
-1. **Find by structure first.** Read `index.md` files and use `traverse` with the
-   relation you are exploring (`extiende`, `fundamenta`, `aplica`, `depende`,
-   `corrige`…). Counting or filtering by type and status is `search` with
-   `type`/`status` and no text: it lists every match.
-2. **Search text as a fallback.** `search` ranks by relevance and shows 20; the
-   footer says how many more matched (`limit=0` for all). Results marked
-   «(parcial: k/n palabras)» lack some of your words — read them knowing that.
+1. **Find with `search`.** Text ranks by relevance and shows 20; the footer says how many
+   more matched (`limit=0` for all). Results marked «(parcial: k/n palabras)» lack some of
+   your words. Counting or listing a set is `search` with `type`/`status` and no text: it
+   lists every match. «Which tasks of status S apply plan X» is one call with `edge` and
+   `linked`.
+2. **Then read or follow.** `read` the notes you found; `traverse` from one of them to
+   follow its relations (declare the `edge_type` you are exploring). Questions about dates
+   («what changed since Tuesday») are `changes`.
 3. **Read before you write.** `read` ends with `🔖 rev: <hex>`. Pass it as
    `base_revision` to `edit` when you replace a body or links. If the note
    changed meanwhile, `edit` refuses and writes nothing: read again, re-apply your
